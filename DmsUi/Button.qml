@@ -1,5 +1,6 @@
 import QtQuick
 import QtQuick.Controls
+import qs.Widgets as DmsWidgets
 import "."
 
 // The button. One component for every clickable thing in the kit.
@@ -74,7 +75,7 @@ BorderSurface {
   implicitHeight: row.implicitHeight + verticalPadding * 2 + _reservedBorderTop + _reservedBorderBottom
   radius: Style.cornerRadius
 
-  readonly property bool hot: mouseArea.containsMouse || hasCursor
+  readonly property bool hot: nativeButton.hovered || hasCursor
   readonly property bool _showFocusRing: focusable && activeFocus
   readonly property color _selectedColor: Style.selectedStateColor(root.foreground, root.accent)
   readonly property var _tooltipBorderSpec: Border.localOrSurfaceSpec("tooltip", "border", root.tooltipBorder, Color.tooltip.border, Math.max(1, Style.normalBorderWidth))
@@ -109,26 +110,31 @@ BorderSurface {
     : bordered                 ? _normalBorderSpec
     : Border.none()
 
-  color: mouseArea.pressed ? Style.pressedFillFor(root.foreground, root.accent)
-    : _showFocusRing       ? Style.focusFillFor(root.foreground, root.accent)
-    : hot                  ? Style.hoverFillFor(root.foreground, root.accent)
-    : selected             ? Style.selectedFillFor(root.foreground, root.accent)
-    : active               ? Style.selectedFillFor(root.foreground, root.accent)
-    : background
+  color: "transparent"
+  borderSpec: Border.none()
+  DmsWidgets.DankButton {
+    id: nativeButton
+    anchors.fill: parent
+    text: ""
+    activeFocusOnTab: false
+    backgroundColor: root.selected || root.active || root.hasCursor
+      ? Style.selectedFillFor(root.foreground, root.accent) : root.background
+    textColor: root.foreground
+    onClicked: {
+      if (root.focusable) root.forceActiveFocus()
+      root.clicked()
+    }
+  }
 
-  // Border follows the same state precedence as fill. Buttons stay
-  // borderless at rest unless `bordered` is set, but hover-cursor/focus
-  // always use the shared cursor border so the keyboard target is visible
-  // and consistent with the rest of the kit. Selected borders are off by
-  // default for plain buttons; explicitly bordered buttons keep their
-  // normal border when selected unless selected-border-width opts in to a
-  // dedicated selected border.
-  borderSpec: _borderSpec
-
-  Behavior on color { ColorAnimation { duration: 120 } }
+  BorderSurface {
+    anchors.fill: parent
+    color: "transparent"
+    borderSpec: root._borderSpec
+    radius: root.radius
+  }
 
   ToolTip {
-    visible: root.tooltipText !== "" && mouseArea.containsMouse
+    visible: root.tooltipText !== "" && nativeButton.hovered
     text: root.tooltipText
     delay: 400
     padding: 0
@@ -190,17 +196,11 @@ BorderSurface {
     }
   }
 
+  // Right-click is separate so it cannot steal native left-click handling.
   MouseArea {
-    id: mouseArea
     anchors.fill: parent
-    hoverEnabled: true
-    cursorShape: Qt.PointingHandCursor
-    acceptedButtons: Qt.LeftButton | Qt.RightButton
-    onClicked: function(mouse) {
-      if (root.focusable) root.forceActiveFocus()
-      if (mouse.button === Qt.RightButton) root.rightClicked()
-      else root.clicked()
-    }
+    acceptedButtons: Qt.RightButton
+    onClicked: root.rightClicked()
   }
 
   HoverHandler {

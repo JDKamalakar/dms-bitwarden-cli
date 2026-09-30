@@ -11,8 +11,8 @@ QtObject {
     readonly property var bar: ({iconFont: Theme.iconSize})
     readonly property var spacing: ({panelPadding: Theme.spacingM, popupPadding: Theme.spacingM,
         controlPaddingX: Theme.spacingM, controlPaddingY: Theme.spacingS,
-        inputPaddingY: Theme.spacingS, controlGap: Theme.spacingS, controlHeight: 36,
-        numberFieldWidth: 110, sm: Theme.spacingS, md: Theme.spacingM})
+        inputPaddingY: Theme.spacingS, controlGap: Theme.spacingS, controlHeight: Theme.fontSizeMedium * 3,
+        numberFieldWidth: Theme.fontSizeMedium * 10, sm: Theme.spacingS, md: Theme.spacingM})
     function space(n) { return n * (Theme.fontSizeMedium / 14); }
     function selectedStateColor(fg, accent) { return accent; }
     function hoverFillFor(fg, accent) { return Theme.withAlpha(accent || Theme.primary, 0.12); }

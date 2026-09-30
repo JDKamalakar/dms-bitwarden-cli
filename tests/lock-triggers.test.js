@@ -12,9 +12,6 @@ const { execFileSync } = require("child_process")
 const Model = {}
 new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenModel.js"), "utf8")
   .replace(/^\.pragma library\s*$/m, "") + `
-  exports.screenLockStateCommand = screenLockStateCommand
-  exports.screenIsLocked = screenIsLocked
-  exports.screenLockPollMs = screenLockPollMs
   exports.sleepMonitorCommand = sleepMonitorCommand
   exports.sleepSignalToken = sleepSignalToken
   exports.wakeSignalToken = wakeSignalToken
@@ -27,42 +24,6 @@ new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenMod
 let pass = 0
 const failures = []
 const check = (l, ok, d) => ok ? pass++ : failures.push(`${l}\n    ${d}`)
-
-// -------------------------------------------------------------------------
-// Screen lock
-// -------------------------------------------------------------------------
-
-// Only "true" is locked. A shell with the lock plugin disabled answers
-// "Target not found." and exits non-zero; that is "no answer", and a vault
-// that reads it as "locked" would relock itself every few seconds forever.
-const LOCK_ANSWERS = [
-  ["true", true],
-  ["true\n", true],
-  ["  true  ", true],
-  ["false", false],
-  ["", false],
-  ["Target not found.", false],
-  ["TRUE", false],
-  ["truthy", false],
-  [null, false],
-  [undefined, false],
-]
-
-for (const [raw, want] of LOCK_ANSWERS) {
-  check(`screenIsLocked(${JSON.stringify(raw)}) is ${want}`,
-    Model.screenIsLocked(raw) === want, String(Model.screenIsLocked(raw)))
-}
-
-const lockCmd = Model.screenLockStateCommand()
-check("screen lock state is asked of the shell's own lock plugin",
-  lockCmd.join(" ").includes("dms ipc call lock isLocked"), lockCmd.join(" "))
-
-check("screen lock state bounds what it will read back",
-  /head -c \d+/.test(lockCmd.join(" ")), lockCmd.join(" "))
-
-check("screen lock poll is a sane interval",
-  Model.screenLockPollMs() >= 1000 && Model.screenLockPollMs() <= 15000,
-  String(Model.screenLockPollMs()))
 
 // -------------------------------------------------------------------------
 // Suspend

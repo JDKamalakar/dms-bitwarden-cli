@@ -31,7 +31,7 @@ The core vault panel uses DMS and the tools listed above. Interactive testing ha
 
 ## Installation
 
-Install directly from this repository while the DMS registry submission is pending:
+The plugin is listed in the DMS plugin registry. For a direct installation from this repository:
 
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins"
@@ -109,7 +109,7 @@ Non-secret preferences are stored through DMS `PluginService`, under the `bitwar
 ~/.config/DankMaterialShell/plugin_settings.json
 ```
 
-Defaults include a 15-minute vault timeout, locking with the desktop and on suspend, and a 30-second clipboard timeout. The port follows DMS `IdleService.isShellLocked` immediately and retains an IPC lock-state poll. The original suspend inhibitor and secret/session cleanup remain in place.
+Defaults include a 15-minute vault timeout, locking with the desktop and on suspend, and a 30-second clipboard timeout. The port follows DMS `IdleService.isShellLocked` immediately without spawning an IPC polling process. SSH approval also reads this live state. The original suspend inhibitor and secret/session cleanup remain in place.
 
 Vault data and account configuration belong to the official Bitwarden CLI. Session handoff files use `$XDG_RUNTIME_DIR/qs-bitwarden-cli`; learned non-secret application associations use `~/.local/state/qs-bitwarden-cli`. The original keyring service name is retained. Do not run this port and the Omarchy version against the same session simultaneously.
 
@@ -130,19 +130,25 @@ Bind `dms ipc call bitwarden toggle` in your compositor's shortcut configuration
 
 ## Optional SSH agent
 
-The upstream SSH helper, approval screens and key-handling code are retained. The agent is disabled by default. The bundled x86-64 helper is checksum-checked by the existing implementation. Its tests also build the source locally and exercise real signing pipelines.
+The upstream SSH helper, approval screens and key-handling code are retained. The agent is disabled by default. The plugin only executes a locally built helper; repository binaries are never probed or launched. Install Rust/Cargo and build it from the plugin checkout before enabling the agent, and rebuild after updates:
+
+```sh
+cargo build --manifest-path agent/Cargo.toml --locked
+```
+
+Without this build the optional agent stays unavailable; normal vault operations still work. Tests build the source locally and exercise signing pipelines with disposable keys.
 
 See [the SSH-agent guide](docs/ssh-agent.md) for the original protocol and routing details. That guide and demo scripts still contain upstream Omarchy commands; use the DMS IPC commands above for this port. Live fingerprint and SSH signing depend on the local device/keyring and the user's own activation; automated tests use disposable keys.
 
 ## Development
 
-Recreate the demo preview with Python 3, Quickshell, and the Inter / JetBrainsMono Nerd Font fonts installed:
+Recreate the demo preview with Python 3, Quickshell, an installed DMS shell, and the Inter / JetBrainsMono Nerd Font fonts installed:
 
 ```sh
 python3 demo/render-dms-preview.py
 ```
 
-The renderer uses a temporary copy of the UI with inert service stubs and writes `docs/screenshots/dms-vault-preview.png`. It does not open your live vault or restart DMS.
+The renderer loads native controls from the installed DMS shell (override its location with `--dms-dir`) and uses a temporary copy of the UI with inert service stubs and writes `docs/screenshots/dms-vault-preview.png`. It does not open your live vault or restart DMS.
 
 For a development checkout, link the repository into DMS instead of cloning into its plugin directory. Run this from the checkout, with no existing `bitwarden` installation at the destination:
 
@@ -157,6 +163,7 @@ Run the automated checks with Rust/Cargo, Node.js and Qt 6's `qmltestrunner` ins
 
 ```sh
 bash tests/run.sh
+python3 demo/render-dms-preview.py --check-controls --output /tmp/bitwarden-controls.png
 ```
 
 The runner builds the SSH helper with its locked Cargo dependencies, runs the Node test files, and executes QtTest checks for keyboard handling, text rendering, layout and SSH models. It does not need your real vault credentials.

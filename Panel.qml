@@ -823,13 +823,7 @@ Item {
   }
 
   function sshAgentMayPrompt() {
-    // An unknown screen state counts as locked. The poll runs every few
-    // seconds while the agent is serving, so a reading older than this means
-    // the poll is not running and the panel cannot tell -- and the cost of
-    // guessing wrong is a credential prompt on a locked desktop.
-    var fresh = root.screenLockCheckedAt > 0
-      && (Date.now() - root.screenLockCheckedAt) < (Model.screenLockPollMs() * 4)
-    if (!Model.sshAgentShouldPrompt(fresh ? { screenLocked: root.screenIsLocked } : null)) return false
+    if (!Model.sshAgentShouldPrompt({ screenLocked: IdleService.isShellLocked })) return false
     return !Model.sshAgentCooldownActive(root.sshCooldown, Date.now())
   }
 
@@ -5545,23 +5539,18 @@ Item {
   // replaces the countdown -- a vault left open at an unlocked desk is still
   // the case only elapsed time can catch.
 
-  // The last reading from the screen-lock poll, with the moment it was taken.
-  // The agent needs this even when lockOnScreenLock is off, because it must
-  // never raise an approval prompt over a locked screen.
+  // DMS provides the live lock state, including while auto-lock is disabled.
   Connections {
     target: IdleService
     function onIsShellLockedChanged() {
-      root.onScreenLockState(IdleService.isShellLocked ? "true" : "false");
+      root.onScreenLockState();
       if (IdleService.isShellLocked && root.opened) root.close();
     }
   }
 
-  property bool screenIsLocked: false
-  property double screenLockCheckedAt: 0
+  readonly property bool screenIsLocked: IdleService.isShellLocked
 
-  function onScreenLockState(raw) {
-    root.screenIsLocked = Model.screenIsLocked(raw) || IdleService.isShellLocked
-    root.screenLockCheckedAt = Date.now()
+  function onScreenLockState() {
     if (!lockOnScreenLock || status !== "unlocked") return
     if (root.screenIsLocked) lockVault()
   }
@@ -5583,21 +5572,6 @@ Item {
     lockVault()
   }
 
-  Timer {
-    id: screenLockPoll
-    interval: Model.screenLockPollMs()
-    repeat: true
-    // Nothing to ask while the setting is off or the vault is already locked,
-    // which between them is every state but the one this is for.
-    // Also while the agent is serving: an approval prompt must never appear
-    // over a locked screen, and that needs a current reading regardless of
-    // whether the vault is set to lock with the screen.
-    running: (root.lockOnScreenLock && root.status === "unlocked") || root.sshAgentGateOpen
-    onTriggered: {
-      if (!screenLockStateProc.running) screenLockStateProc.running = true
-    }
-  }
-
   // Comes back for the processes that were mid-read when the vault locked.
   // Stops as soon as the queue empties, which is the same tick for everything
   // that was already idle.
@@ -5608,15 +5582,6 @@ Item {
     onTriggered: {
       root.scrubStep()
       if (!root.scrubPending.length) stop()
-    }
-  }
-
-  Process {
-    id: screenLockStateProc
-    command: Model.screenLockStateCommand()
-    stdout: StdioCollector {
-      waitForEnd: true
-      onStreamFinished: root.onScreenLockState(text)
     }
   }
 
@@ -6583,7 +6548,7 @@ Item {
         unlockShowing: root.sshUnlockRequest !== null,
         grants: root.sshGrants.length,
         screenLocked: root.screenIsLocked,
-        screenLockAgeMs: root.screenLockCheckedAt > 0 ? Math.round(Date.now() - root.screenLockCheckedAt) : -1,
+        screenLockSource: "IdleService",
         mayPrompt: root.sshAgentMayPrompt(),
         cooldownRefusals: root.sshCooldown ? root.sshCooldown.refusals : 0,
         cooldownActive: Model.sshAgentCooldownActive(root.sshCooldown, Date.now())

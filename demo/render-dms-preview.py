@@ -4,6 +4,9 @@ from pathlib import Path
 import re,shutil,json,subprocess,os,tempfile,argparse
 repo=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
+parser.add_argument('--screen', choices=('vault', 'login'), default='vault')
+parser.add_argument('--check-controls', action='store_true', help='Exercise native inputs with disposable data')
+parser.add_argument('--dms-dir', type=Path, help='Installed DMS shell directory providing native widgets')
 parser.add_argument('--output', type=Path, default=repo/'docs/screenshots/dms-vault-preview.png')
 args=parser.parse_args()
 output=args.output.resolve()
@@ -14,6 +17,20 @@ for p in repo.glob('*.qml'):
  if p.name not in ('BarWidget.qml','Settings.qml'):shutil.copy(p,tmp/p.name)
 shutil.copy(repo/'BitwardenModel.js',tmp/'BitwardenModel.js')
 shutil.copytree(repo/'DmsUi',tmp/'DmsUi',dirs_exist_ok=True)
+# Load the actual installed native controls; never start host services.
+dms=args.dms_dir
+if dms is None:
+ candidates=sorted(Path('/run/user/'+str(os.getuid())+'/danklinux-shell').glob('*/DankCommon'),key=lambda p:p.stat().st_mtime,reverse=True)
+ if not candidates: raise SystemExit('Pass --dms-dir pointing to the installed DMS shell directory')
+ dms=candidates[0].parent
+for sub in ('Widgets','DankCommon/Widgets'):
+ shutil.copytree(dms/sub,tmp/sub,dirs_exist_ok=True)
+common=tmp/'DankCommon/Common';common.mkdir(parents=True)
+for name in ('Style','Appearance','Fonts','Anims','DankAnim','DankColorAnim'):
+ shutil.copy(dms/'DankCommon/Common'/f'{name}.qml',common/f'{name}.qml')
+(common/'I18n.qml').write_text('pragma Singleton\nimport QtQuick\nQtObject { readonly property bool isRtl: false }')
+(common/'qmldir').write_text(''.join(f'singleton {n} 1.0 {n}.qml\n' for n in ('Style','Appearance','Fonts','Anims','I18n')) + 'DankAnim 1.0 DankAnim.qml\nDankColorAnim 1.0 DankColorAnim.qml\n')
+
 # Locate QML blocks without treating braces in strings/comments as syntax.
 tokens=re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|"(?:\\.|[^"\\])*"|\'(?:\\.|[^\'\\])*\'|[{}]')
 def endblock(s,start):
@@ -132,14 +149,39 @@ Window {
  Timer { interval: 1500; running: true; onTriggered: canvas.grabToImage(function(result) {result.saveToFile("/tmp/bitwarden-dankbar-preview.png"); Qt.quit();}) }
 }''')
 shell=tmp/'shell.qml'
+if args.screen == 'login':
+ shell.write_text(shell.read_text().replace('status = "unlocked";', 'status = "unauthenticated";'))
 shell.write_text(shell.read_text().replace(chr(34)+'/tmp/bitwarden-dankbar-preview.png'+chr(34),json.dumps(str(output))))
 env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',USER='demo',LOGNAME='demo',HOME=str(tmp),XDG_CONFIG_HOME=str(tmp/'config'),XDG_DATA_HOME=str(tmp/'data'),XDG_STATE_HOME=str(tmp/'state'))
 env.pop('WAYLAND_DISPLAY',None)
 env.pop('DISPLAY',None)
 env['QT_QPA_PLATFORMTHEME']=''
 env['QT_QUICK_CONTROLS_STYLE']='Basic'
-r=subprocess.run(['qs','-p',str(tmp/'shell.qml')],env=env,capture_output=True,text=True,timeout=20)
+if args.check_controls:
+ # QtTest runs the real controls without Quickshell's host module loader.
+ (tmp/'qs').symlink_to(tmp, target_is_directory=True)
+ for folder in ('Widgets','DankCommon/Widgets'):
+  (tmp/folder).chmod(0o700)
+  if (tmp/folder/'qmldir').exists(): (tmp/folder/'qmldir').chmod(0o600)
+  (tmp/folder/'qmldir').write_text('module qs.'+folder.replace('/','.')+'\n'+''.join(f'{f.stem} 1.0 {f.name}\n' for f in (tmp/folder).glob('*.qml')))
+ for folder in ('Common','DankCommon/Common'):
+  directory=tmp/folder/'qmldir'
+  directory.write_text('module qs.'+folder.replace('/','.')+'\n'+directory.read_text())
+ for name in ('Style','Appearance','Fonts','Anims'):
+  file=common/f'{name}.qml'
+  file.chmod(0o600)
+  file.write_text(file.read_text().replace('import Quickshell', '').replace('Singleton {','Item {'))
+ shutil.copy(repo/'demo/check-dms-controls.qml',tmp/'tst_controls.qml')
+ runner=shutil.which('qmltestrunner') or '/usr/lib/qt6/bin/qmltestrunner'
+ checks=subprocess.run([runner,'-import',str(tmp),'-input',str(tmp/'tst_controls.qml'),'-o','-,txt'],env=env,capture_output=True,text=True,timeout=20)
+ if checks.returncode or '3 passed, 0 failed' not in checks.stdout+checks.stderr:
+  raise SystemExit(checks.stdout+checks.stderr)
+ print(checks.stdout)
+try:
+ r=subprocess.run(['qs','-p',str(tmp/'shell.qml')],env=env,capture_output=True,text=True,timeout=20)
+except subprocess.TimeoutExpired as error:
+ raise SystemExit((error.stdout or b'').decode(errors='replace')+(error.stderr or b'').decode(errors='replace'))
 workspace.cleanup()
-if r.returncode or 'ERROR:' in r.stdout+r.stderr or not output.is_file():
+if r.returncode or re.search(r'ERROR:|ReferenceError:|TypeError:|Cannot assign|Binding loop', r.stdout+r.stderr) or not output.is_file():
  raise SystemExit(r.stdout+r.stderr)
 print(output)

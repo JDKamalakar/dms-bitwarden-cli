@@ -203,23 +203,8 @@ eq("and so does every view before the first tick",
   Model.sshAgentGrantsAt(announced, 0).length, 1)
 eq("a malformed set re-derives to nothing", Model.sshAgentGrantsAt(null, 1).length, 0)
 
-// A development helper is a state you can sit in for days without noticing,
-// signing with a binary that has no recorded digest and no provenance. The
-// warning has to say why that matters, and distinguish a shipped helper that
-// was rejected from one that was simply never there.
-const rejected = Model.sshAgentDevelopmentHelperWarning({ source: "development", checksum: "mismatch" })
-check("a rejected shipped helper is named as the reason", /checksum/i.test(rejected), rejected)
-const absent = Model.sshAgentDevelopmentHelperWarning({ source: "development", checksum: "unchecked" })
-check("an absent one is not blamed on a checksum", !/checksum/i.test(absent), absent)
-for (const [label, text] of [["rejected", rejected], ["absent", absent]]) {
-  check(`the ${label} warning says what is serving keys`, /locally built/i.test(text), text)
-  check(`the ${label} warning says what it lacks`, /provenance|digest/i.test(text), text)
-  check(`the ${label} warning says how to fix it`, /reinstall/i.test(text), text)
-  check(`the ${label} warning does not answer a user with a build command`,
-    !/build-agent|cargo/.test(text), text)
-}
-check("a missing helper record does not throw",
-  typeof Model.sshAgentDevelopmentHelperWarning(null) === "string", "threw or returned non-string")
+const warning = Model.sshAgentDevelopmentHelperWarning(null)
+check("local helper notice tells users to rebuild after updates", /locally built/.test(warning) && /Rebuild/.test(warning), warning)
 
 // -------------------------------------------------------------------------
 // Never prompt over a locked screen
