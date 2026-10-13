@@ -64,7 +64,7 @@ Item {
   readonly property int sshAgentApprovalWindowSec: Model.intSetting("sshAgentApprovalWindowSec", setting("sshAgentApprovalWindowSec"))
 
   // The SSH sections' own section header. PanelSectionHeader comes from the
-  // Omarchy shell, and its defaults are the global theme's -- `Color.foreground`
+  // Omarchy shell, and its defaults are the global theme's -- `DmsColor.foreground`
   // and `Style.font.family` -- while everything around it here follows the bar's
   // own foreground and font family. Stating them once keeps the headers matching
   // the captions beneath them, and keeps `textFormat` explicit, which this
@@ -111,7 +111,7 @@ Item {
     text: Model.plainLabel(name + ": " + Model.clipLabel(value, 20))
     iconText: root.openFilterGroup === group ? "󰅀" : glyph
     selected: root.openFilterGroup === group
-    accent: Color.accent
+    accent: DmsColor.accent
     fontFamily: root.fontFamily
     fontSize: Style.font.caption
     horizontalPadding: Style.space(10)
@@ -564,15 +564,15 @@ Item {
     && logoutCredentialsExitCode !== 0
 
   // Visual styles
-  readonly property color fg: bar ? bar.foreground : Color.foreground
-  readonly property color urgent: bar ? bar.urgent : Color.urgent
-  readonly property color accent: Color.accent
+  readonly property color fg: bar ? bar.foreground : DmsColor.foreground
+  readonly property color urgent: bar ? bar.urgent : DmsColor.urgent
+  readonly property color accent: DmsColor.accent
   readonly property color dim: Qt.darker(fg, 1.5)
   readonly property color barIconColor: {
-    var base = bar ? bar.barForeground : Color.foreground
-    if (status === "unlocked") return Color.accent
+    var base = bar ? bar.barForeground : DmsColor.foreground
+    if (status === "unlocked") return DmsColor.accent
     if (status === "locked" || status === "checking") return base
-    return bar ? bar.urgent : Color.urgent
+    return bar ? bar.urgent : DmsColor.urgent
   }
   readonly property string fontFamily: bar ? bar.fontFamily : Style.font.family
 
@@ -6884,9 +6884,9 @@ Item {
           visible: root.totpFollowupActive && root.totpFollowupItem !== null
           width: parent.width
           implicitHeight: Style.space(42)
-          color: Util.alpha(Color.accent, 0.2)
+          color: Util.alpha(DmsColor.accent, 0.2)
           radius: Style.cornerRadius
-          borderSpec: Border.surfaceSpec("menu", "border", Color.accent, 1)
+          borderSpec: Border.surfaceSpec("menu", "border", DmsColor.accent, 1)
 
           Row {
             anchors.fill: parent
@@ -6898,7 +6898,7 @@ Item {
               textFormat: Text.PlainText
               anchors.verticalCenter: parent.verticalCenter
               text: "󰄬"
-              color: Color.accent
+              color: DmsColor.accent
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
@@ -6920,7 +6920,7 @@ Item {
               Text {
                 textFormat: Text.PlainText
                 text: root.totpFollowupCode ? (Tr.text("Code: ") + root.totpFollowupCode + Tr.text(" (expires in ") + root.totpSecRemaining + "s)") : Tr.text("Fetching 2FA code...")
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -6931,7 +6931,7 @@ Item {
               anchors.verticalCenter: parent.verticalCenter
               text: Tr.text("Copy TOTP (Enter)")
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
               onClicked: {
@@ -6954,9 +6954,9 @@ Item {
           visible: root.sshAgentHelper.source === "development" && root.activeScreen !== "settings"
           width: parent.width
           implicitHeight: sshDevHelperText.implicitHeight + Style.space(12)
-          color: Util.alpha(Color.urgent, 0.15)
+          color: Util.alpha(DmsColor.urgent, 0.15)
           radius: Style.cornerRadius
-          borderSpec: Border.surfaceSpec("menu", "border", Color.urgent, 1)
+          borderSpec: Border.surfaceSpec("menu", "border", DmsColor.urgent, 1)
 
           Row {
             anchors.centerIn: parent
@@ -6965,7 +6965,7 @@ Item {
             Text {
               textFormat: Text.PlainText
               text: "󰀪"
-              color: Color.urgent
+              color: DmsColor.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
@@ -6995,9 +6995,9 @@ Item {
           visible: root.sshCooldownStatus.active
           width: parent.width
           implicitHeight: sshCooldownBannerBody.implicitHeight + Style.space(12)
-          color: Util.alpha(Color.urgent, 0.15)
+          color: Util.alpha(DmsColor.urgent, 0.15)
           radius: Style.cornerRadius
-          borderSpec: Border.surfaceSpec("menu", "border", Color.urgent, 1)
+          borderSpec: Border.surfaceSpec("menu", "border", DmsColor.urgent, 1)
 
           Row {
             anchors.centerIn: parent
@@ -7006,7 +7006,7 @@ Item {
             Text {
               textFormat: Text.PlainText
               text: "󰀪"
-              color: Color.urgent
+              color: DmsColor.urgent
               font.family: root.fontFamily
               font.pixelSize: Style.font.body
             }
@@ -7082,7 +7082,7 @@ Item {
                 text: Tr.text("New Send")
                 iconText: "󰐕"
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 onClicked: root.beginCreateSend()
@@ -7146,9 +7146,9 @@ Item {
                   implicitHeight: sendRowCol.implicitHeight + Style.space(16)
                   radius: Style.cornerRadius
                   readonly property bool cursored: index === root.sendIndex
-                  color: cursored ? Style.hoverFillFor(root.fg, Color.accent) : "transparent"
+                  color: cursored ? Style.hoverFillFor(root.fg, DmsColor.accent) : "transparent"
                   borderSpec: Border.surfaceSpec("menu", "border",
-                    cursored ? Color.accent : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18), 1)
+                    cursored ? DmsColor.accent : Qt.rgba(root.fg.r, root.fg.g, root.fg.b, 0.18), 1)
 
                   MouseArea {
                     anchors.fill: parent
@@ -7165,7 +7165,7 @@ Item {
                       textFormat: Text.PlainText
                       anchors.verticalCenter: parent.verticalCenter
                       text: modelData.isFile ? "󰈤" : "󰈙"
-                      color: Color.accent
+                      color: DmsColor.accent
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.subtitle
                     }
@@ -7207,7 +7207,7 @@ Item {
                           textFormat: Text.PlainText
                           visible: modelData.passwordSet
                           text: Tr.text("\u00b7 󰌾 password")
-                          color: Color.accent
+                          color: DmsColor.accent
                           font.family: root.fontFamily
                           font.pixelSize: Style.font.caption
                         }
@@ -7268,7 +7268,7 @@ Item {
                   text: Tr.text("Hide text by default")
                   tooltipText: Tr.text("The recipient must click to reveal it")
                   selected: root.sendFormHidden
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.caption
                   onClicked: root.sendFormHidden = !root.sendFormHidden
@@ -7302,7 +7302,7 @@ Item {
                   to: 31
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.sendFormDays = v }
                 }
@@ -7335,7 +7335,7 @@ Item {
                   to: 100
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.sendFormMaxAccess = v }
                 }
@@ -7357,7 +7357,7 @@ Item {
                 iconText: root.sendBusy ? "󰑐" : "󰒗"
                 iconSpinning: root.sendBusy
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 enabled: !root.sendBusy
                 onClicked: root.submitCreateSend()
@@ -7461,7 +7461,7 @@ Item {
                   iconText: root.fpBusy ? "󰑐" : "󰈷"
                   iconSpinning: root.fpBusy
                   selected: true
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   enabled: !root.fpBusy
                   onClicked: root.submitFingerprintSetup()
@@ -7527,7 +7527,7 @@ Item {
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 enabled: !root.genBusy && root.genValue !== ""
                 onClicked: root.useGeneratedPassword()
               }
@@ -7538,8 +7538,8 @@ Item {
               width: parent.width
               implicitHeight: Style.space(58)
               radius: Style.cornerRadius
-              color: Style.hoverFillFor(root.fg, Color.accent)
-              borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+              color: Style.hoverFillFor(root.fg, DmsColor.accent)
+              borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
               Row {
                 anchors.fill: parent
@@ -7552,7 +7552,7 @@ Item {
                   anchors.verticalCenter: parent.verticalCenter
                   width: parent.width - Style.space(90)
                   text: root.genBusy ? Tr.text("Generating...") : (root.genValue || "-")
-                  color: Color.accent
+                  color: DmsColor.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.subtitle
                   font.bold: true
@@ -7593,7 +7593,7 @@ Item {
                 Text {
                   textFormat: Text.PlainText
                   text: Tr.text(parent.parent.strength.label)
-                  color: Color.accent
+                  color: DmsColor.accent
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.caption
                   font.bold: true
@@ -7618,7 +7618,7 @@ Item {
                   width: parent.width * parent.parent.strength.fraction
                   height: parent.height
                   radius: height / 2
-                  color: Color.accent
+                  color: DmsColor.accent
                 }
               }
             }
@@ -7634,7 +7634,7 @@ Item {
                 text: Tr.text("Password")
                 iconText: "󰌆"
                 selected: root.genOpts.type === "password"
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 onClicked: root.setGenOpt("type", "password")
@@ -7644,7 +7644,7 @@ Item {
                 text: Tr.text("Passphrase")
                 iconText: "󰈚"
                 selected: root.genOpts.type === "passphrase"
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.bodySmall
                 onClicked: root.setGenOpt("type", "passphrase")
@@ -7676,7 +7676,7 @@ Item {
                   to: 128
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.setGenOpt("length", v) }
                 }
@@ -7689,7 +7689,7 @@ Item {
                 Button {
                   text: "A-Z"
                   selected: root.genOpts.uppercase
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("uppercase", !root.genOpts.uppercase)
@@ -7697,7 +7697,7 @@ Item {
                 Button {
                   text: "a-z"
                   selected: root.genOpts.lowercase
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("lowercase", !root.genOpts.lowercase)
@@ -7705,7 +7705,7 @@ Item {
                 Button {
                   text: "0-9"
                   selected: root.genOpts.numbers
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("numbers", !root.genOpts.numbers)
@@ -7713,7 +7713,7 @@ Item {
                 Button {
                   text: "!@#$%^&*"
                   selected: root.genOpts.special
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("special", !root.genOpts.special)
@@ -7722,7 +7722,7 @@ Item {
                   text: Tr.text("Avoid ambiguous")
                   tooltipText: Tr.text("Exclude characters that are easy to confuse, such as l, 1, I, O and 0")
                   selected: root.genOpts.ambiguous
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("ambiguous", !root.genOpts.ambiguous)
@@ -7749,7 +7749,7 @@ Item {
                   to: 9
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.setGenOpt("minNumber", v) }
                 }
@@ -7775,7 +7775,7 @@ Item {
                   to: 9
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.setGenOpt("minSpecial", v) }
                 }
@@ -7807,7 +7807,7 @@ Item {
                   to: 20
                   stepSize: 1
                   foreground: root.fg
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   onModified: function(v) { root.setGenOpt("words", v) }
                 }
@@ -7840,7 +7840,7 @@ Item {
                 Button {
                   text: Tr.text("Capitalize")
                   selected: root.genOpts.capitalize
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("capitalize", !root.genOpts.capitalize)
@@ -7848,7 +7848,7 @@ Item {
                 Button {
                   text: Tr.text("Include number")
                   selected: root.genOpts.includeNumber
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.setGenOpt("includeNumber", !root.genOpts.includeNumber)
@@ -7941,7 +7941,7 @@ Item {
               enabled: !root.pinBusy
               // A short PIN is allowed but not waved through: the border goes
               // red rather than accent while it is under the recommendation.
-              accent: root.pinSetupWeak ? root.urgent : Color.accent
+              accent: root.pinSetupWeak ? root.urgent : DmsColor.accent
               foreground: root.pinSetupWeak ? root.urgent : root.fg
             }
 
@@ -7987,7 +7987,7 @@ Item {
                 iconText: root.pinBusy ? "󰑐" : "󰄬"
                 iconSpinning: root.pinBusy
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 enabled: !root.pinBusy
                 onClicked: root.submitPinSetup()
@@ -8069,7 +8069,7 @@ Item {
               radius: Style.cornerRadius
               color: modelData.ready ? "transparent" : Util.alpha(root.urgent, 0.12)
               borderSpec: Border.surfaceSpec("menu", "border",
-                modelData.ready ? Color.accent : root.urgent, 1)
+                modelData.ready ? DmsColor.accent : root.urgent, 1)
 
               Row {
                 id: depRow
@@ -8081,7 +8081,7 @@ Item {
                   textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: modelData.ready ? "󰄬" : (modelData.required ? "󰅖" : "󰋗")
-                  color: modelData.ready ? Color.accent : (modelData.required ? root.urgent : root.dim)
+                  color: modelData.ready ? DmsColor.accent : (modelData.required ? root.urgent : root.dim)
                   font.family: root.fontFamily
                   font.pixelSize: Style.font.subtitle
                 }
@@ -8184,7 +8184,7 @@ Item {
               text: root.installablePackages.length > 1 ? Tr.text("Install all missing") : Tr.text("Install")
               iconText: "󰐕"
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               tooltipText: Tr.text("Install package: ") + root.installablePackages.join(" ")
               fontFamily: root.fontFamily
               fontSize: Style.font.bodySmall
@@ -8257,7 +8257,7 @@ Item {
                 anchors.verticalCenter: parent.verticalCenter
                 visible: root.settingsFlash !== ""
                 text: "󰄬 " + root.settingsFlash
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
               }
@@ -8393,7 +8393,7 @@ Item {
                     width: Style.space(3)
                     height: parent.height - Style.space(6)
                     radius: width / 2
-                    color: Color.accent
+                    color: DmsColor.accent
                     visible: cursored
                   }
 
@@ -8445,7 +8445,7 @@ Item {
                       checked: modelData.type === "bool" && root.settingValue(modelData)
                       interactive: !blocked
                       foreground: root.fg
-                      accent: Color.accent
+                      accent: DmsColor.accent
                       onToggled: {
                         if (blocked) return
                         // A PIN cannot simply be switched on: it has to be chosen,
@@ -8482,7 +8482,7 @@ Item {
                       to: modelData.max || 100
                       stepSize: modelData.step || 1
                       foreground: root.fg
-                      accent: Color.accent
+                      accent: DmsColor.accent
                       fontFamily: root.fontFamily
                       onModified: function(v) { root.writeSetting(modelData.key, v, "int") }
                     }
@@ -8567,7 +8567,7 @@ Item {
             PanelSectionHeader {
               textFormat: Text.PlainText
               text: Tr.text("DANGER ZONE")
-              foreground: Color.urgent
+              foreground: DmsColor.urgent
               fontFamily: root.fontFamily
             }
 
@@ -8666,7 +8666,7 @@ Item {
             textFormat: Text.PlainText
             width: parent.width
             text: Tr.text("󰌆  An SSH key is needed")
-            color: Color.accent
+            color: DmsColor.accent
             font.family: root.fontFamily
             font.pixelSize: Style.font.body
           }
@@ -8896,7 +8896,7 @@ Item {
               Text {
                 textFormat: Text.PlainText
                 text: Tr.text("NEW DEVICE VERIFICATION")
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -8928,7 +8928,7 @@ Item {
                 iconText: root.isLoading ? "󰑐" : "󰌋"
                 iconSpinning: root.isLoading
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 enabled: !root.isLoading
                 onClicked: root.submitDeviceVerification()
@@ -8975,7 +8975,7 @@ Item {
               Text {
                 textFormat: Text.PlainText
                 text: Tr.text("TWO-STEP METHOD")
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -9045,7 +9045,7 @@ Item {
                 text: root.login2faMethodLabel
                   ? Tr.text("TWO-STEP CODE (") + root.login2faMethodLabel.toUpperCase() + ")"
                   : Tr.text("TWO-STEP VERIFICATION CODE (2FA)")
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -9106,7 +9106,7 @@ Item {
               iconText: root.logoutCleanupFailed ? "󰑐" : ((root.logoutPending || root.isLoading) ? "󰑐" : "󰌋")
               iconSpinning: !root.logoutCleanupFailed && (root.logoutPending || root.isLoading)
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               enabled: root.logoutCleanupFailed || (!root.logoutPending && !root.isLoading)
               onClicked: root.logoutCleanupFailed ? root.retryLogoutCleanup() : root.submitLogin()
@@ -9167,7 +9167,7 @@ Item {
               iconText: root.logoutCleanupFailed ? "󰑐" : ((root.logoutPending || root.isLoading) ? "󰑐" : "󰌋")
               iconSpinning: !root.logoutCleanupFailed && (root.logoutPending || root.isLoading)
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               enabled: root.logoutCleanupFailed || (!root.logoutPending && !root.isLoading)
               onClicked: root.logoutCleanupFailed ? root.retryLogoutCleanup() : root.submitLogin()
@@ -9185,7 +9185,7 @@ Item {
               text: root.loginDeviceVerification
                 ? Tr.text("Device verification needs a terminal:")
                 : Tr.text("Prefer interactive TTY login?")
-              color: root.loginDeviceVerification ? Color.accent : root.dim
+              color: root.loginDeviceVerification ? DmsColor.accent : root.dim
               font.family: root.fontFamily
               font.pixelSize: Style.font.caption
               font.bold: root.loginDeviceVerification
@@ -9195,7 +9195,7 @@ Item {
               text: root.loginDeviceVerification ? Tr.text("Finish in Terminal") : Tr.text("Launch Terminal")
               iconText: "󰞷"
               selected: root.loginDeviceVerification
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               fontSize: Style.font.caption
               onClicked: root.launchTerminalLogin()
@@ -9224,7 +9224,7 @@ Item {
               textFormat: Text.PlainText
               anchors.horizontalCenter: parent.horizontalCenter
               text: root.fingerprintScanning ? "󰈷" : "󰌋"
-              color: root.fingerprintScanning ? Color.accent : root.fg
+              color: root.fingerprintScanning ? DmsColor.accent : root.fg
               opacity: 0.85
               font.family: root.fontFamily
               font.pixelSize: Style.space(38)
@@ -9266,7 +9266,7 @@ Item {
             width: parent.width
             horizontalAlignment: Text.AlignHCenter
             text: root.fingerprintMessage
-            color: root.fingerprintScanning ? Color.accent : root.dim
+            color: root.fingerprintScanning ? DmsColor.accent : root.dim
             font.family: root.fontFamily
             font.pixelSize: Style.font.bodySmall
             wrapMode: Text.WordWrap
@@ -9314,7 +9314,7 @@ Item {
                 iconText: root.pinBusy ? "󰑐" : "󰌿"
                 iconSpinning: root.pinBusy
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 enabled: !root.pinBusy && !root.isUnlocking
                 onClicked: root.submitPinUnlock()
@@ -9365,7 +9365,7 @@ Item {
               text: root.fingerprintScanning ? Tr.text("Waiting for fingerprint...") : Tr.text("Unlock with Fingerprint")
               iconText: "󰈷"
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               enabled: !root.isUnlocking && !root.fingerprintScanning
               onClicked: root.startFingerprintUnlock()
@@ -9405,7 +9405,7 @@ Item {
               iconText: root.isUnlocking ? "󰑐" : "󰌋"
               iconSpinning: root.isUnlocking
               selected: true
-              accent: Color.accent
+              accent: DmsColor.accent
               fontFamily: root.fontFamily
               enabled: !root.isUnlocking
               onClicked: root.unlockVault()
@@ -9506,8 +9506,8 @@ Item {
             width: parent.width
             implicitHeight: Style.space(28)
             radius: Style.cornerRadius
-            color: Style.selectedFillFor(root.fg, Color.accent)
-            borderSpec: Border.controlSpec("normal", Color.accent, Color.accent)
+            color: Style.selectedFillFor(root.fg, DmsColor.accent)
+            borderSpec: Border.controlSpec("normal", DmsColor.accent, DmsColor.accent)
 
             // A RowLayout, so the label can be told to take whatever the glyph
             // and the dismiss button leave rather than a hand-measured slice of
@@ -9523,7 +9523,7 @@ Item {
                 textFormat: Text.PlainText
                 Layout.alignment: Qt.AlignVCenter
                 text: "󰌠"
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
               }
@@ -9533,7 +9533,7 @@ Item {
                 Layout.alignment: Qt.AlignVCenter
                 Layout.fillWidth: true
                 text: Tr.text("Suggested for ") + (root.detectedContext ? root.detectedContext.displayName : Tr.text("active window"))
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -9588,10 +9588,10 @@ Item {
                 implicitHeight: Style.space(46)
                 radius: Style.cornerRadius
                 color: isSelected
-                  ? Style.selectedFillFor(root.fg, Color.accent)
-                  : (isHovered ? Style.hoverFillFor(root.fg, Color.accent) : "transparent")
+                  ? Style.selectedFillFor(root.fg, DmsColor.accent)
+                  : (isHovered ? Style.hoverFillFor(root.fg, DmsColor.accent) : "transparent")
                 borderSpec: isSelected
-                  ? Border.controlSpec("selected", root.fg, Color.accent)
+                  ? Border.controlSpec("selected", root.fg, DmsColor.accent)
                   : Border.none()
 
                 HoverHandler {
@@ -9628,7 +9628,7 @@ Item {
                     text: itemData.pending ? "󰑐" : Model.itemTypeGlyph(itemData.typeCode)
                     color: itemData.pending
                       ? root.dim
-                      : (itemData.favorite ? Color.accent : root.fg)
+                      : (itemData.favorite ? DmsColor.accent : root.fg)
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.title
                     width: Style.space(20)
@@ -9676,7 +9676,7 @@ Item {
                         textFormat: Text.PlainText
                         visible: itemData.favorite
                         text: "★"
-                        color: Color.accent
+                        color: DmsColor.accent
                         font.pixelSize: Style.font.bodySmall
                         anchors.verticalCenter: parent.verticalCenter
                       }
@@ -9702,7 +9702,7 @@ Item {
                         textFormat: Text.PlainText
                         visible: Boolean(itemData.isSuggested)
                         text: root.learnedIds[itemData.id] ? Tr.text("󰐾 Suggested") : Tr.text("󰌠 Suggested")
-                        color: Color.accent
+                        color: DmsColor.accent
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
                         font.bold: true
@@ -9712,7 +9712,7 @@ Item {
                         textFormat: Text.PlainText
                         visible: Boolean(itemData.organizationId)
                         text: "󰓹 Org"
-                        color: Color.accent
+                        color: DmsColor.accent
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.caption
                         font.bold: true
@@ -9873,7 +9873,7 @@ Item {
                 text: root.openFilterGroup === "folders" ? "󰉋"
                     : root.openFilterGroup === "organizations" ? "󰦑"
                     : "󰀻"
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.bodySmall
               }
@@ -9884,7 +9884,7 @@ Item {
                 text: root.openFilterGroup === "folders" ? Tr.text("FOLDERS")
                     : root.openFilterGroup === "organizations" ? Tr.text("ORGANIZATIONS")
                     : Tr.text("TYPES")
-                color: Color.accent
+                color: DmsColor.accent
                 font.family: root.fontFamily
                 font.pixelSize: Style.font.caption
                 font.bold: true
@@ -9945,11 +9945,11 @@ Item {
                     implicitHeight: root.filterRowHeight
                     radius: Style.cornerRadius
                     readonly property bool cursored: index === root.filterOptionIndex
-                    color: modelData.active ? Style.selectedFillFor(root.fg, Color.accent)
-                         : (cursored || optionMouse.containsMouse) ? Style.hoverFillFor(root.fg, Color.accent)
+                    color: modelData.active ? Style.selectedFillFor(root.fg, DmsColor.accent)
+                         : (cursored || optionMouse.containsMouse) ? Style.hoverFillFor(root.fg, DmsColor.accent)
                          : "transparent"
                     borderSpec: Border.surfaceSpec("menu", "border",
-                      (modelData.active || cursored) ? Color.accent : "transparent",
+                      (modelData.active || cursored) ? DmsColor.accent : "transparent",
                       (modelData.active || cursored) ? 1 : 0)
 
                     MouseArea {
@@ -9971,7 +9971,7 @@ Item {
                         textFormat: Text.PlainText
                         anchors.verticalCenter: parent.verticalCenter
                         text: modelData.icon
-                        color: modelData.active ? Color.accent : root.dim
+                        color: modelData.active ? DmsColor.accent : root.dim
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.body
                       }
@@ -9981,7 +9981,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         width: parent.width - Style.space(50)
                         text: modelData.label
-                        color: modelData.active ? Color.accent : root.fg
+                        color: modelData.active ? DmsColor.accent : root.fg
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.bodySmall
                         font.bold: modelData.active
@@ -9993,7 +9993,7 @@ Item {
                         anchors.verticalCenter: parent.verticalCenter
                         visible: modelData.active
                         text: "󰄬"
-                        color: Color.accent
+                        color: DmsColor.accent
                         font.family: root.fontFamily
                         font.pixelSize: Style.font.bodySmall
                       }
@@ -10101,7 +10101,7 @@ Item {
               text: pinned ? Tr.text("Suggested here") : Tr.text("Suggest here")
               iconText: pinned ? "󰐾" : "󰐽"
               selected: pinned
-              accent: Color.accent
+              accent: DmsColor.accent
               // The window title is no more trustworthy than a vault value,
               // and the kit renders tooltips with an auto-detecting Text.
               tooltipText: Model.plainLabel((pinned ? Tr.text("Stop suggesting this for ") : Tr.text("Always suggest this for "))
@@ -10124,7 +10124,7 @@ Item {
               visible: Boolean(root.detailItem && root.detailItem.typeCode !== 5)
               text: Tr.text("Delete")
               iconText: "󰆴"
-              accent: Color.urgent
+              accent: DmsColor.urgent
               fontFamily: root.fontFamily
               fontSize: Style.font.bodySmall
               onClicked: root.showDeleteConfirm = true
@@ -10136,9 +10136,9 @@ Item {
             visible: root.showDeleteConfirm
             width: parent.width
             implicitHeight: Style.space(64)
-            color: Util.alpha(Color.urgent, 0.15)
+            color: Util.alpha(DmsColor.urgent, 0.15)
             radius: Style.cornerRadius
-            borderSpec: Border.surfaceSpec("menu", "border", Color.urgent, 1)
+            borderSpec: Border.surfaceSpec("menu", "border", DmsColor.urgent, 1)
 
             Row {
               anchors.centerIn: parent
@@ -10158,7 +10158,7 @@ Item {
                 text: Tr.text("Confirm Delete")
                 iconText: "󰆴"
                 selected: true
-                accent: Color.urgent
+                accent: DmsColor.urgent
                 fontFamily: root.fontFamily
                 fontSize: Style.font.caption
                 onClicked: root.deleteCurrentItem()
@@ -10202,7 +10202,7 @@ Item {
                   textFormat: Text.PlainText
                   anchors.verticalCenter: parent.verticalCenter
                   text: root.detailItem ? Model.itemTypeGlyph(root.detailItem.typeCode) : "󰌋"
-                  color: (root.detailItem && root.detailItem.favorite) ? Color.accent : root.fg
+                  color: (root.detailItem && root.detailItem.favorite) ? DmsColor.accent : root.fg
                   font.family: root.fontFamily
                   font.pixelSize: Style.space(26)
                 }
@@ -10231,7 +10231,7 @@ Item {
                       textFormat: Text.PlainText
                       visible: Boolean(root.detailItem && root.detailItem.favorite)
                       text: "★"
-                      color: Color.accent
+                      color: DmsColor.accent
                       font.pixelSize: Style.font.body
                     }
                   }
@@ -10249,7 +10249,7 @@ Item {
                       textFormat: Text.PlainText
                       visible: Boolean(root.detailItem && root.detailItem.organizationId)
                       text: Tr.text("• Shared Organization")
-                      color: Color.accent
+                      color: DmsColor.accent
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.caption
                     }
@@ -10277,8 +10277,8 @@ Item {
                   width: parent.width
                   implicitHeight: Math.max(Style.space(54), sshPublicKeyText.implicitHeight + Style.space(20))
                   radius: Style.cornerRadius
-                  color: Style.hoverFillFor(root.fg, Color.accent)
-                  borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                  color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                  borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
                   Text {
                     textFormat: Text.PlainText
                     id: sshPublicKeyText
@@ -10327,8 +10327,8 @@ Item {
                   width: parent.width
                   implicitHeight: Style.space(34)
                   radius: Style.cornerRadius
-                  color: Style.hoverFillFor(root.fg, Color.accent)
-                  borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                  color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                  borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                   Row {
                     anchors.fill: parent
@@ -10383,7 +10383,7 @@ Item {
                   Text {
                     textFormat: Text.PlainText
                     text: root.totpSecRemaining + "s"
-                    color: Color.accent
+                    color: DmsColor.accent
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption
                     font.bold: true
@@ -10395,8 +10395,8 @@ Item {
                   width: parent.width
                   implicitHeight: Style.space(44)
                   radius: Style.cornerRadius
-                  color: Style.hoverFillFor(root.fg, Color.accent)
-                  borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                  color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                  borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                   Rectangle {
                     anchors.left: parent.left
@@ -10404,7 +10404,7 @@ Item {
                     height: Style.space(3)
                     radius: Style.cornerRadius
                     width: parent.width * (root.totpSecRemaining / 30.0)
-                    color: Color.accent
+                    color: DmsColor.accent
                   }
 
                   Row {
@@ -10416,7 +10416,7 @@ Item {
                       textFormat: Text.PlainText
                       anchors.verticalCenter: parent.verticalCenter
                       text: root.liveTotp ? (root.liveTotp.length === 6 ? root.liveTotp.slice(0, 3) + " " + root.liveTotp.slice(3) : root.liveTotp) : Tr.text("Loading...")
-                      color: Color.accent
+                      color: DmsColor.accent
                       font.family: root.fontFamily
                       font.pixelSize: Style.font.title
                       font.bold: true
@@ -10451,8 +10451,8 @@ Item {
                     width: detailContentColumn.width
                     implicitHeight: Style.space(34)
                     radius: Style.cornerRadius
-                    color: Style.hoverFillFor(root.fg, Color.accent)
-                    borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                    color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                    borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                     Row {
                       anchors.fill: parent
@@ -10526,8 +10526,8 @@ Item {
                     width: detailContentColumn.width
                     implicitHeight: Style.space(34)
                     radius: Style.cornerRadius
-                    color: Style.hoverFillFor(root.fg, Color.accent)
-                    borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                    color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                    borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                     Row {
                       anchors.fill: parent
@@ -10628,8 +10628,8 @@ Item {
                   width: parent.width
                   implicitHeight: notesText.implicitHeight + Style.space(16)
                   radius: Style.cornerRadius
-                  color: Style.hoverFillFor(root.fg, Color.accent)
-                  borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                  color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                  borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                   Text {
                     textFormat: Text.PlainText
@@ -10815,8 +10815,8 @@ Item {
                 width: parent.width
                 implicitHeight: addressText.implicitHeight + Style.space(16)
                 radius: Style.cornerRadius
-                color: Style.hoverFillFor(root.fg, Color.accent)
-                borderSpec: Border.controlSpec("normal", root.fg, Color.accent)
+                color: Style.hoverFillFor(root.fg, DmsColor.accent)
+                borderSpec: Border.controlSpec("normal", root.fg, DmsColor.accent)
 
                 Row {
                   anchors.fill: parent
@@ -10972,7 +10972,7 @@ Item {
                   text: Model.plainLabel(root.formFolderLabel())
                   iconText: root.formPicker === "folder" ? "\u{F0140}" : "\u{F024B}"
                   selected: root.formPicker === "folder"
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   leftAlign: true
@@ -11062,7 +11062,7 @@ Item {
                   text: Model.plainLabel(root.formOrgLabel())
                   iconText: root.formPicker === "organization" ? "\u{F0140}" : "\u{F0991}"
                   selected: root.formPicker === "organization"
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   leftAlign: true
@@ -11597,7 +11597,7 @@ Item {
                 Button {
                   text: root.formFavorite ? Tr.text("★ In Favorites") : Tr.text("☆ Add to Favorites")
                   selected: root.formFavorite
-                  accent: Color.accent
+                  accent: DmsColor.accent
                   fontFamily: root.fontFamily
                   fontSize: Style.font.bodySmall
                   onClicked: root.formFavorite = !root.formFavorite
@@ -11627,7 +11627,7 @@ Item {
                 iconText: root.isLoading ? "󰑐" : "󰄬"
                 iconSpinning: root.isLoading
                 selected: true
-                accent: Color.accent
+                accent: DmsColor.accent
                 fontFamily: root.fontFamily
                 enabled: !root.isLoading
                 onClicked: root.saveItemForm()
@@ -11649,7 +11649,7 @@ Item {
         errorMessage: root.errorMessage
         statusSuppressed: root.totpFollowupActive
         foreground: root.fg
-        surfaceColor: root.bar ? root.bar.background : Color.background
+        surfaceColor: root.bar ? root.bar.background : DmsColor.background
         accentColor: root.accent
         urgentColor: root.urgent
         fontFamily: root.fontFamily

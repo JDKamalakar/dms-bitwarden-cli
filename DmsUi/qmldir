@@ -1,5 +1,5 @@
 singleton Style 1.0 Style.qml
-singleton Color 1.0 Color.qml
+singleton DmsColor 1.0 DmsColor.qml
 singleton Border 1.0 Border.qml
 singleton Util 1.0 Util.qml
 singleton Tr 1.0 Tr.qml

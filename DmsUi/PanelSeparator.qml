@@ -7,7 +7,7 @@ import "."
 Rectangle {
   id: root
 
-  property color foreground: Color.foreground
+  property color foreground: DmsColor.foreground
   property real strength: 0.12
 
   width: parent ? parent.width : implicitWidth

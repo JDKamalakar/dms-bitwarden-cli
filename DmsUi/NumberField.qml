@@ -8,8 +8,8 @@ Column {
     property int from: 0
     property int to: 100
     property int stepSize: 1
-    property color foreground: Color.foreground
-    property color accent: Color.accent
+    property color foreground: DmsColor.foreground
+    property color accent: DmsColor.accent
     property string fontFamily: Style.font.family
     property real fontSize: Style.font.body
     property real fieldWidth: Style.spacing.numberFieldWidth
