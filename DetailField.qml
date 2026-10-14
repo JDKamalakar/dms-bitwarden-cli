@@ -58,8 +58,8 @@ Column {
     width: parent.width
     implicitHeight: Style.space(34)
     radius: Style.cornerRadius
-    color: Style.hoverFillFor(root.foreground, Color.accent)
-    borderSpec: Border.controlSpec("normal", root.foreground, Color.accent)
+    color: Style.hoverFillFor(root.foreground, DmsColor.accent)
+    borderSpec: Border.controlSpec("normal", root.foreground, DmsColor.accent)
 
     Row {
       anchors.fill: parent

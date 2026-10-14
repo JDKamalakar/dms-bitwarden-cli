@@ -13,16 +13,16 @@ BorderSurface {
   property string glyph: ""
   property bool picked: false
   property bool multi: false
-  property color foreground: Color.foreground
+  property color foreground: DmsColor.foreground
   property string fontFamily: Style.font.family
 
   signal activated()
 
   implicitHeight: Style.space(28)
   radius: Style.cornerRadius
-  color: picked ? Style.selectedFillFor(foreground, Color.accent)
-       : (mouse.containsMouse ? Style.hoverFillFor(foreground, Color.accent) : "transparent")
-  borderSpec: Border.surfaceSpec("menu", "border", picked ? Color.accent : "transparent", picked ? 1 : 0)
+  color: picked ? Style.selectedFillFor(foreground, DmsColor.accent)
+       : (mouse.containsMouse ? Style.hoverFillFor(foreground, DmsColor.accent) : "transparent")
+  borderSpec: Border.surfaceSpec("menu", "border", picked ? DmsColor.accent : "transparent", picked ? 1 : 0)
 
   MouseArea {
     id: mouse
@@ -42,7 +42,7 @@ BorderSurface {
       textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
       text: row.glyph
-      color: row.picked ? Color.accent : Qt.darker(row.foreground, 1.5)
+      color: row.picked ? DmsColor.accent : Qt.darker(row.foreground, 1.5)
       font.family: row.fontFamily
       font.pixelSize: Style.font.bodySmall
     }
@@ -52,7 +52,7 @@ BorderSurface {
       anchors.verticalCenter: parent.verticalCenter
       width: parent.width - Style.space(46)
       text: row.label
-      color: row.picked ? Color.accent : row.foreground
+      color: row.picked ? DmsColor.accent : row.foreground
       font.family: row.fontFamily
       font.pixelSize: Style.font.bodySmall
       font.bold: row.picked
@@ -64,7 +64,7 @@ BorderSurface {
       anchors.verticalCenter: parent.verticalCenter
       visible: row.multi || row.picked
       text: row.multi ? (row.picked ? "󰄲" : "󰄱") : "󰄬"
-      color: row.picked ? Color.accent : Qt.darker(row.foreground, 1.6)
+      color: row.picked ? DmsColor.accent : Qt.darker(row.foreground, 1.6)
       font.family: row.fontFamily
       font.pixelSize: Style.font.bodySmall
     }

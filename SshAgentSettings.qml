@@ -57,7 +57,7 @@ Column {
         : (panel.sshAgentSetup.state === "error" ? "󰀪" : "󰅘")
       color: panel.sshAgentSetup.state === "error"
         ? panel.urgent
-        : (panel.sshAgentSetup.state === "enabled" && !panel.sshAgentSetup.busy ? Color.accent : panel.dim)
+        : (panel.sshAgentSetup.state === "enabled" && !panel.sshAgentSetup.busy ? DmsColor.accent : panel.dim)
       font.family: panel.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -124,7 +124,7 @@ Column {
     textFormat: Text.PlainText
     width: parent.width
     text: "  " + panel.sshRouting.terminalCheck
-    color: Color.accent
+    color: DmsColor.accent
     font.family: panel.fontFamily
     font.pixelSize: Style.font.caption
     wrapMode: Text.WrapAnywhere

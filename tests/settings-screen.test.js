@@ -230,7 +230,7 @@ check("destructive actions are separated from maintenance ones",
   "expected both headings")
 
 check("the danger heading is drawn in the urgent colour",
-  /text: "DANGER ZONE"[\s\S]{0,120}foreground: Color\.urgent/.test(panelSrc),
+  /text: "DANGER ZONE"[\s\S]{0,120}foreground: DmsColor\.urgent/.test(panelSrc),
   "a destructive section should not look like every other heading")
 
 check("the danger zone is set off by a separator",

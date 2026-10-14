@@ -58,7 +58,7 @@ Column {
       textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
       text: "󰌆"
-      color: Color.accent
+      color: DmsColor.accent
       font.family: panel.fontFamily
       font.pixelSize: Style.font.body
     }
@@ -79,7 +79,7 @@ Column {
       visible: panel.sshPendingCount > 1
       anchors.verticalCenter: parent.verticalCenter
       text: Tr.text("1 of ") + panel.sshPendingCount
-      color: Color.accent
+      color: DmsColor.accent
       font.family: panel.fontFamily
       font.pixelSize: Style.font.caption
       font.bold: true

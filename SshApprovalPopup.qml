@@ -85,7 +85,7 @@ PanelWindow {
 
   Rectangle {
     anchors.fill: parent
-    color: Color.menu.scrim
+    color: DmsColor.menu.scrim
   }
 
   MouseArea {
@@ -99,8 +99,8 @@ PanelWindow {
     height: popup.cardHeight
     anchors.centerIn: parent
     radius: Style.cornerRadius
-    color: Color.popups.background
-    borderSpec: Border.surfaceSpec("popups", "border", Color.popups.border,
+    color: DmsColor.popups.background
+    borderSpec: Border.surfaceSpec("popups", "border", DmsColor.popups.border,
       Math.max(1, Style.space(2)))
     padding: Style.spacing.panelPadding
 

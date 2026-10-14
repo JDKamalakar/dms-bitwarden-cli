@@ -48,7 +48,7 @@ Column {
       textFormat: Text.PlainText
       anchors.horizontalCenter: parent.horizontalCenter
       text: screen.panel.fingerprintScanning ? "󰈷" : "󰌋"
-      color: screen.panel.fingerprintScanning ? Color.accent : screen.panel.fg
+      color: screen.panel.fingerprintScanning ? DmsColor.accent : screen.panel.fg
       opacity: 0.85
       font.family: screen.panel.fontFamily
       font.pixelSize: Style.space(38)
@@ -111,7 +111,7 @@ Column {
     width: parent.width
     horizontalAlignment: Text.AlignHCenter
     text: screen.panel.fingerprintMessage
-    color: screen.panel.fingerprintScanning ? Color.accent : screen.panel.dim
+    color: screen.panel.fingerprintScanning ? DmsColor.accent : screen.panel.dim
     font.family: screen.panel.fontFamily
     font.pixelSize: Style.font.bodySmall
     wrapMode: Text.WordWrap
@@ -137,7 +137,7 @@ Column {
     width: parent.width
     height: loadingText.implicitHeight + Style.space(20)
     radius: Style.cornerRadius
-    color: Util.alpha(Color.popups.text, 0.06)
+    color: Util.alpha(DmsColor.popups.text, 0.06)
 
     Text {
       id: loadingText
@@ -191,7 +191,7 @@ Column {
         iconText: screen.panel.pinBusy ? "󰑐" : "󰌿"
         iconSpinning: screen.panel.pinBusy
         selected: true
-        accent: Color.accent
+        accent: DmsColor.accent
         fontFamily: screen.panel.fontFamily
         focusable: true
         enabled: !screen.panel.pinBusy && !screen.panel.isUnlocking
@@ -231,7 +231,7 @@ Column {
       text: screen.panel.fingerprintScanning ? Tr.text("Waiting for fingerprint...") : Tr.text("Unlock with Fingerprint")
       iconText: "󰈷"
       selected: true
-      accent: Color.accent
+      accent: DmsColor.accent
       fontFamily: screen.panel.fontFamily
       focusable: true
       enabled: !screen.panel.isUnlocking && !screen.panel.fingerprintScanning
@@ -271,7 +271,7 @@ Column {
       iconText: screen.panel.isUnlocking ? "󰑐" : "󰌋"
       iconSpinning: screen.panel.isUnlocking
       selected: true
-      accent: Color.accent
+      accent: DmsColor.accent
       fontFamily: screen.panel.fontFamily
       focusable: true
       enabled: !screen.panel.isUnlocking

@@ -12,8 +12,8 @@ FocusScope {
     property alias validator: field.validator
     property alias maximumLength: field.maximumLength
     property alias cursorPosition: field.cursorPosition
-    property color foreground: Color.foreground
-    property color accent: Color.accent
+    property color foreground: DmsColor.foreground
+    property color accent: DmsColor.accent
     property bool password: false
     property bool hasCursor: false
     signal accepted()
