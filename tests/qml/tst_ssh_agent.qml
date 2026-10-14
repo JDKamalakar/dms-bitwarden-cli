@@ -11,7 +11,7 @@ TestCase {
   name: "SshAgent"
 
   readonly property string readyLine: JSON.stringify({
-    v: 1, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
+    v: 2, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
     fifoPath: "/run/user/1000/qs-bitwarden-cli/ssh-keys.fifo", agentVersion: "0.1.0"
   })
 
@@ -89,8 +89,8 @@ TestCase {
   function test_bad_output_closes_the_gate() {
     var cases = [
       { line: "not json", code: "MALFORMED" },
-      { line: '{"v":2,"type":"locked","epoch":1}', code: "VERSION_MISMATCH" },
-      { line: '{"v":1,"type":"exec"}', code: "UNKNOWN_TYPE" },
+      { line: '{"v":1,"type":"locked","epoch":1}', code: "VERSION_MISMATCH" },
+      { line: '{"v":2,"type":"exec"}', code: "UNKNOWN_TYPE" },
       { line: readyLine, code: "PROTOCOL" }
     ]
     for (var i = 0; i < cases.length; i++) {
@@ -105,7 +105,7 @@ TestCase {
     var filler = new Array(Model.sshAgentMaxLineBytes()).join("é")
     var run = drive(ready().state, [{
       kind: "line", nowMs: 100,
-      line: '{"v":1,"type":"error","code":"X","message":"' + filler + '"}'
+      line: '{"v":2,"type":"error","code":"X","message":"' + filler + '"}'
     }])
     compare(run.state.errorCode, "LINE_TOO_LONG")
     compare(run.state.gateOpen, false)

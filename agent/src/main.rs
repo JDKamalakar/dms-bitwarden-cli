@@ -1,6 +1,6 @@
-use qs_bitwarden_ssh_agent::approvals::{ApprovalManager, RequestId, Submit};
+use qs_bitwarden_ssh_agent::approvals::{ApprovalManager, GrantDuration, RequestId, Submit};
 use qs_bitwarden_ssh_agent::control::{
-    parse_control_line, ControlMessage, LoadStatus, MAX_CONTROL_LINE,
+    parse_control_line, ControlMessage, LoadStatus, CONTROL_VERSION, MAX_CONTROL_LINE,
 };
 use qs_bitwarden_ssh_agent::keystore::KeyStore;
 use qs_bitwarden_ssh_agent::lifecycle::harden_process;
@@ -117,7 +117,9 @@ struct GrantView {
     #[serde(rename = "processPath")]
     process_path: String,
     #[serde(rename = "expiresInSec")]
-    expires_in_sec: u64,
+    expires_in_sec: Option<u64>,
+    #[serde(rename = "untilScreenLock")]
+    until_screen_lock: bool,
 }
 
 struct PendingSign {
@@ -143,7 +145,7 @@ struct HeldSign {
     /// and only then asking is pure delay. The approval still decides
     /// nothing: the load must produce the very key that was approved, and the
     /// final epoch/state/key check runs immediately before signing.
-    approved: Option<u64>,
+    approved: Option<GrantDuration>,
 }
 
 /// Identity listings waiting on an unlock, and the one request id that was
@@ -313,7 +315,7 @@ async fn run() -> Result<(), ()> {
                     ControlMessage::Hello { .. } if !handshake_complete => {
                         handshake_complete = true;
                         gate_open = true;
-                        emit(&output_tx, Output::Ready { v: 1, socket_path: socket.clone(), fifo_path: fifo.clone(), agent_version: env!("CARGO_PKG_VERSION").to_owned() })?;
+                        emit(&output_tx, Output::Ready { v: CONTROL_VERSION, socket_path: socket.clone(), fifo_path: fifo.clone(), agent_version: env!("CARGO_PKG_VERSION").to_owned() })?;
                     }
                     ControlMessage::Hello { .. } => return Err(()),
                     ControlMessage::VaultLocked { epoch, .. } => {
@@ -324,7 +326,7 @@ async fn run() -> Result<(), ()> {
                         fail_pending(&mut pending);
                         cancel_held(&mut held, "locked", &output_tx)?;
                         release_held_identities(&mut held_identities, &store, &output_tx, "locked")?;
-                        emit(&output_tx, Output::Locked { v: 1, epoch })?;
+                        emit(&output_tx, Output::Locked { v: CONTROL_VERSION, epoch })?;
                     }
                     ControlMessage::VaultLoggedOut { .. } => {
                         gate_open = false;
@@ -335,17 +337,17 @@ async fn run() -> Result<(), ()> {
                         cancel_held(&mut held, "logged-out", &output_tx)?;
                         release_held_identities(&mut held_identities, &store, &output_tx, "logged-out")?;
                     }
-                    ControlMessage::Approve { request_id, grant_seconds, .. } => {
+                    ControlMessage::Approve { request_id, duration, .. } => {
                         // A held request is one still waiting on a load. The
                         // approval is recorded now and applied the moment the
                         // keys arrive, so the user is not made to wait out the
                         // vault read before being asked.
                         if let Some(request) = held.get_mut(&request_id) {
-                            request.approved = Some(grant_seconds);
+                            request.approved = Some(duration);
                             continue;
                         }
                         let Some(sign) = pending.remove(&request_id) else { continue };
-                        let response = approvals.approve(request_id, grant_seconds, elapsed_ms(started)).ok()
+                        let response = approvals.approve(request_id, duration, elapsed_ms(started)).ok()
                             .and_then(|authorization| authorization.finalize(&store))
                             .and_then(|permit| store.sign(&permit, &sign.message, sign.flags))
                             .and_then(protocol::signature_response)
@@ -363,7 +365,15 @@ async fn run() -> Result<(), ()> {
                         }
                     }
                     ControlMessage::Options { unlock_on_demand: on, .. } => unlock_on_demand = on,
-                    ControlMessage::RevokeGrants { .. } => approvals.revoke_all_grants(),
+                    ControlMessage::RevokeGrants { .. } => {
+                        approvals.revoke_all_grants();
+                        // A pre-load approval must not recreate a revoked grant.
+                        for request in held.values_mut() {
+                            if matches!(request.approved, Some(GrantDuration::Seconds(_) | GrantDuration::UntilScreenLock)) {
+                                request.approved = Some(GrantDuration::Once);
+                            }
+                        }
+                    }
                     ControlMessage::RevokeGrant { grant_id, .. } => approvals.revoke_grant(grant_id),
                     ControlMessage::Shutdown { .. } => break,
                     ControlMessage::KeyLoadBegin { epoch, load_id, .. } => {
@@ -420,12 +430,12 @@ async fn run() -> Result<(), ()> {
                     if let Some(sign) = pending.remove(&id) { let _ = sign.reply.send(protocol::failure_response()); }
                     // Whatever ended it -- a client that walked away or a
                     // deadline that passed -- the panel may still be prompting.
-                    emit(&output_tx, Output::RequestCancelled { v: 1, request_id: id, reason: "withdrawn" })?;
+                    emit(&output_tx, Output::RequestCancelled { v: CONTROL_VERSION, request_id: id, reason: "withdrawn" })?;
                 }
                 let stale: Vec<_> = held.iter().filter_map(|(id, request)| (request.reply.is_closed() || request.deadline_ms <= now).then_some(*id)).collect();
                 for id in stale {
                     if let Some(request) = held.remove(&id) { let _ = request.reply.send(protocol::failure_response()); }
-                    emit(&output_tx, Output::RequestCancelled { v: 1, request_id: id, reason: "withdrawn" })?;
+                    emit(&output_tx, Output::RequestCancelled { v: CONTROL_VERSION, request_id: id, reason: "withdrawn" })?;
                 }
                 if held_identities.as_ref().is_some_and(|w| w.deadline_ms <= now) {
                     release_held_identities(&mut held_identities, &store, &output_tx, "withdrawn")?;
@@ -483,7 +493,7 @@ fn handle_client(
                     emit(
                         output,
                         Output::UnlockRequired {
-                            v: 1,
+                            v: CONTROL_VERSION,
                             request_id: id,
                             reason: "list-identities",
                             key_name: String::new(),
@@ -539,7 +549,7 @@ fn handle_client(
                 emit(
                     output,
                     Output::UnlockRequired {
-                        v: 1,
+                        v: CONTROL_VERSION,
                         request_id: id,
                         reason: "sign",
                         key_name: key.name.clone(),
@@ -595,7 +605,7 @@ fn handle_client(
                     emit(
                         output,
                         Output::ApprovalRequired {
-                            v: 1,
+                            v: CONTROL_VERSION,
                             request_id: id,
                             key_id: key.item_id.clone(),
                             key_name: key.name.clone(),
@@ -643,7 +653,7 @@ fn release_held(
         emit(
             output,
             Output::RequestCancelled {
-                v: 1,
+                v: CONTROL_VERSION,
                 request_id: old_id,
                 reason: "released",
             },
@@ -656,7 +666,7 @@ fn release_held(
         // epoch and consume the approval straight away. Every check the
         // ordinary path makes still runs -- the key must be present, the
         // vault unlocked, and the epoch current at the signing primitive.
-        if let Some(grant_seconds) = request.approved {
+        if let Some(duration) = request.approved {
             let response = match approvals.submit(
                 store.epoch(),
                 &request.public_blob,
@@ -669,7 +679,7 @@ fn release_held(
                     .and_then(protocol::signature_response)
                     .unwrap_or_else(protocol::failure_response),
                 Ok(Submit::Pending(id)) => approvals
-                    .approve(id, grant_seconds, elapsed_ms(started))
+                    .approve(id, duration, elapsed_ms(started))
                     .ok()
                     .and_then(|authorization| authorization.finalize(store))
                     .and_then(|permit| store.sign(&permit, &request.message, request.flags))
@@ -707,7 +717,7 @@ fn release_held(
                 emit(
                     output,
                     Output::ApprovalRequired {
-                        v: 1,
+                        v: CONTROL_VERSION,
                         request_id: id,
                         key_id: key.item_id.clone(),
                         key_name: key.name.clone(),
@@ -760,7 +770,7 @@ fn release_held_identities(
     emit(
         output,
         Output::RequestCancelled {
-            v: 1,
+            v: CONTROL_VERSION,
             request_id: waiters.request_id,
             reason,
         },
@@ -778,7 +788,7 @@ fn cancel_held(
         emit(
             output,
             Output::RequestCancelled {
-                v: 1,
+                v: CONTROL_VERSION,
                 request_id: id,
                 reason,
             },
@@ -815,11 +825,20 @@ fn emit_grants_if_changed(
                 fingerprint: key.map(|key| key.fingerprint.clone()).unwrap_or_default(),
                 pid: grant.peer.pid,
                 process_path: grant.peer.executable.to_string_lossy().into_owned(),
-                expires_in_sec: grant.expires_at_ms.saturating_sub(now_ms) / 1000,
+                expires_in_sec: grant
+                    .expires_at_ms
+                    .map(|expiry| expiry.saturating_sub(now_ms) / 1000),
+                until_screen_lock: grant.expires_at_ms.is_none(),
             }
         })
         .collect();
-    emit(output, Output::GrantsChanged { v: 1, grants })
+    emit(
+        output,
+        Output::GrantsChanged {
+            v: CONTROL_VERSION,
+            grants,
+        },
+    )
 }
 
 fn fail_pending(pending: &mut HashMap<RequestId, PendingSign>) {
@@ -864,7 +883,7 @@ fn finish_load_if_ready(
                 emit(
                     output,
                     Output::PublicKey {
-                        v: 1,
+                        v: CONTROL_VERSION,
                         epoch: load.epoch,
                         item_id: identity.item_id.clone(),
                         name: identity.name.clone(),
@@ -876,7 +895,7 @@ fn finish_load_if_ready(
             emit(
                 output,
                 Output::KeysLoaded {
-                    v: 1,
+                    v: CONTROL_VERSION,
                     epoch: load.epoch,
                     key_count: report.loaded,
                 },

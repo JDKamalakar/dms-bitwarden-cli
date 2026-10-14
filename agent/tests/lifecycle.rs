@@ -1,3 +1,4 @@
+use qs_bitwarden_ssh_agent::approvals::GrantDuration;
 use qs_bitwarden_ssh_agent::control::{
     parse_control_line, ControlError, ControlMessage, LoadStatus, MAX_CONTROL_LINE,
 };
@@ -36,16 +37,16 @@ impl Drop for TempDir {
 #[test]
 fn control_contract_accepts_every_allowlisted_message() {
     let messages = [
-        r#"{"v":1,"type":"hello"}"#,
-        r#"{"v":1,"type":"key_load_begin","epoch":7,"loadId":"00112233445566778899aabbccddeeff"}"#,
-        r#"{"v":1,"type":"key_load_end","epoch":7,"status":"ok"}"#,
-        r#"{"v":1,"type":"vault_locked","epoch":8}"#,
-        r#"{"v":1,"type":"vault_logged_out"}"#,
-        r#"{"v":1,"type":"approve","requestId":42,"grantSeconds":120}"#,
-        r#"{"v":1,"type":"deny","requestId":42}"#,
-        r#"{"v":1,"type":"unlock_cancelled","requestId":41,"reason":"user-cancelled"}"#,
-        r#"{"v":1,"type":"revoke_grants"}"#,
-        r#"{"v":1,"type":"shutdown"}"#,
+        r#"{"v":2,"type":"hello"}"#,
+        r#"{"v":2,"type":"key_load_begin","epoch":7,"loadId":"00112233445566778899aabbccddeeff"}"#,
+        r#"{"v":2,"type":"key_load_end","epoch":7,"status":"ok"}"#,
+        r#"{"v":2,"type":"vault_locked","epoch":8}"#,
+        r#"{"v":2,"type":"vault_logged_out"}"#,
+        r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":120}"#,
+        r#"{"v":2,"type":"deny","requestId":42}"#,
+        r#"{"v":2,"type":"unlock_cancelled","requestId":41,"reason":"user-cancelled"}"#,
+        r#"{"v":2,"type":"revoke_grants"}"#,
+        r#"{"v":2,"type":"shutdown"}"#,
     ];
     for message in messages {
         parse_control_line(message.as_bytes()).unwrap();
@@ -60,6 +61,46 @@ fn control_contract_accepts_every_allowlisted_message() {
 }
 
 #[test]
+fn approval_forms_are_explicit_and_reject_conflicting_durations() {
+    for (line, expected) in [
+        (
+            r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":120}"#,
+            GrantDuration::Seconds(120),
+        ),
+        (
+            r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":0}"#,
+            GrantDuration::Once,
+        ),
+        (
+            r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":0,"untilScreenLock":true}"#,
+            GrantDuration::UntilScreenLock,
+        ),
+    ] {
+        let ControlMessage::Approve { duration, .. } = parse_control_line(line.as_bytes()).unwrap()
+        else {
+            panic!("expected approval");
+        };
+        assert_eq!(duration, expected);
+    }
+    for line in [
+        r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":120,"untilScreenLock":true}"#,
+        r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":0,"untilScreenLock":"true"}"#,
+        r#"{"v":2,"type":"approve","requestId":42,"grantSeconds":0,"unknown":true}"#,
+    ] {
+        assert_eq!(
+            parse_control_line(line.as_bytes()),
+            Err(ControlError::Malformed)
+        );
+    }
+    assert_eq!(
+        parse_control_line(
+            br#"{"v":1,"type":"approve","requestId":42,"grantSeconds":120,"untilScreenLock":true}"#
+        ),
+        Err(ControlError::WrongVersion)
+    );
+}
+
+#[test]
 fn control_contract_rejects_untrusted_shapes_and_versions() {
     assert_eq!(parse_control_line(b""), Err(ControlError::Empty));
     assert_eq!(
@@ -67,15 +108,15 @@ fn control_contract_rejects_untrusted_shapes_and_versions() {
         Err(ControlError::Malformed)
     );
     assert_eq!(
-        parse_control_line(br#"{"v":2,"type":"hello"}"#),
+        parse_control_line(br#"{"v":1,"type":"hello"}"#),
         Err(ControlError::WrongVersion)
     );
     assert_eq!(
-        parse_control_line(br#"{"v":1,"type":"unknown"}"#),
+        parse_control_line(br#"{"v":2,"type":"unknown"}"#),
         Err(ControlError::Malformed)
     );
     assert_eq!(
-        parse_control_line(br#"{"v":1,"type":"hello","extra":true}"#),
+        parse_control_line(br#"{"v":2,"type":"hello","extra":true}"#),
         Err(ControlError::Malformed)
     );
     let oversized = vec![b'x'; MAX_CONTROL_LINE + 1];
@@ -122,14 +163,14 @@ fn executable_handshake_is_private_singleton_and_eof_supervised() {
         .stdin
         .as_mut()
         .unwrap()
-        .write_all(b"{\"v\":1,\"type\":\"hello\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"hello\"}\n")
         .unwrap();
     let mut ready_line = String::new();
     BufReader::new(child.stdout.take().unwrap())
         .read_line(&mut ready_line)
         .unwrap();
     let ready: serde_json::Value = serde_json::from_str(&ready_line).unwrap();
-    assert_eq!(ready["v"], 1);
+    assert_eq!(ready["v"], 2);
     assert_eq!(ready["type"], "ready");
     let socket = PathBuf::from(ready["socketPath"].as_str().unwrap());
     let fifo = PathBuf::from(ready["fifoPath"].as_str().unwrap());
@@ -169,16 +210,16 @@ fn hello_is_a_one_time_handshake_not_a_signing_gate_command() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     let mut output = BufReader::new(child.stdout.take().unwrap());
-    input.write_all(b"{\"v\":1,\"type\":\"hello\"}\n").unwrap();
+    input.write_all(b"{\"v\":2,\"type\":\"hello\"}\n").unwrap();
     input.flush().unwrap();
     assert_eq!(read_json_line(&mut output)["type"], "ready");
 
     input
-        .write_all(b"{\"v\":1,\"type\":\"vault_locked\",\"epoch\":1}\n")
+        .write_all(b"{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}\n")
         .unwrap();
     input.flush().unwrap();
     assert_eq!(read_json_line(&mut output)["type"], "locked");
-    input.write_all(b"{\"v\":1,\"type\":\"hello\"}\n").unwrap();
+    input.write_all(b"{\"v\":2,\"type\":\"hello\"}\n").unwrap();
     input.flush().unwrap();
 
     assert!(!child.wait().unwrap().success());
@@ -198,7 +239,7 @@ fn disposable_key_load_identity_and_approved_sign_cross_the_real_socket() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     let mut output = BufReader::new(child.stdout.take().unwrap());
-    input.write_all(b"{\"v\":1,\"type\":\"hello\"}\n").unwrap();
+    input.write_all(b"{\"v\":2,\"type\":\"hello\"}\n").unwrap();
     input.flush().unwrap();
     let ready = read_json_line(&mut output);
     let socket = PathBuf::from(ready["socketPath"].as_str().unwrap());
@@ -209,7 +250,7 @@ fn disposable_key_load_identity_and_approved_sign_cross_the_real_socket() {
     let nonce = "0123456789abcdef0123456789abcdef";
     writeln!(
         input,
-        "{{\"v\":1,\"type\":\"key_load_begin\",\"epoch\":1,\"loadId\":\"{nonce}\"}}"
+        "{{\"v\":2,\"type\":\"key_load_begin\",\"epoch\":1,\"loadId\":\"{nonce}\"}}"
     )
     .unwrap();
     input.flush().unwrap();
@@ -227,7 +268,7 @@ fn disposable_key_load_identity_and_approved_sign_cross_the_real_socket() {
     writer.write_all(b"\n").unwrap();
     drop(writer);
     input
-        .write_all(b"{\"v\":1,\"type\":\"key_load_end\",\"epoch\":1,\"status\":\"ok\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"key_load_end\",\"epoch\":1,\"status\":\"ok\"}\n")
         .unwrap();
     input.flush().unwrap();
     let mut loaded = read_json_line(&mut output);
@@ -264,7 +305,7 @@ fn disposable_key_load_identity_and_approved_sign_cross_the_real_socket() {
     let request_id = approval["requestId"].as_u64().unwrap();
     writeln!(
         input,
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
     )
     .unwrap();
     input.flush().unwrap();
@@ -298,15 +339,34 @@ fn disposable_key_load_identity_and_approved_sign_cross_the_real_socket() {
     let request_id = approval["requestId"].as_u64().unwrap();
     writeln!(
         input,
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0,\"untilScreenLock\":true}}"
     )
     .unwrap();
     input.flush().unwrap();
     assert!(ssh_keygen.wait().unwrap().success());
     assert!(message_path.with_extension("txt.sig").exists());
+    let grants = read_json_line(&mut output);
+    assert_eq!(grants["type"], "grants_changed");
+    assert_eq!(grants["grants"][0]["untilScreenLock"], true);
+    assert!(grants["grants"][0]["expiresInSec"].is_null());
+
+    // A fresh OpenSSH process uses the same program grant without another prompt.
+    let status = Command::new("/usr/bin/ssh-keygen")
+        .env_clear()
+        .env("SSH_AUTH_SOCK", &socket)
+        .args(["-Y", "sign", "-f"])
+        .arg(&public_path)
+        .args(["-n", "git"])
+        .arg(&message_path)
+        .stdin(Stdio::null())
+        .stdout(Stdio::null())
+        .stderr(Stdio::null())
+        .status()
+        .unwrap();
+    assert!(status.success());
 
     input
-        .write_all(b"{\"v\":1,\"type\":\"shutdown\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"shutdown\"}\n")
         .unwrap();
     input.flush().unwrap();
     assert!(child.wait().unwrap().success());
@@ -330,7 +390,7 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
         .unwrap();
     let mut input = child.stdin.take().unwrap();
     let mut output = BufReader::new(child.stdout.take().unwrap());
-    input.write_all(b"{\"v\":1,\"type\":\"hello\"}\n").unwrap();
+    input.write_all(b"{\"v\":2,\"type\":\"hello\"}\n").unwrap();
     input.flush().unwrap();
     let ready = read_json_line(&mut output);
     let socket = PathBuf::from(ready["socketPath"].as_str().unwrap());
@@ -341,7 +401,7 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
     let nonce = "0123456789abcdef0123456789abcdef";
     writeln!(
         input,
-        "{{\"v\":1,\"type\":\"key_load_begin\",\"epoch\":1,\"loadId\":\"{nonce}\"}}"
+        "{{\"v\":2,\"type\":\"key_load_begin\",\"epoch\":1,\"loadId\":\"{nonce}\"}}"
     )
     .unwrap();
     input.flush().unwrap();
@@ -359,7 +419,7 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
     writer.write_all(b"\n").unwrap();
     drop(writer);
     input
-        .write_all(b"{\"v\":1,\"type\":\"key_load_end\",\"epoch\":1,\"status\":\"ok\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"key_load_end\",\"epoch\":1,\"status\":\"ok\"}\n")
         .unwrap();
     input.flush().unwrap();
     let mut loaded = read_json_line(&mut output);
@@ -373,7 +433,7 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
     assert_eq!(identity_count(&socket), 1);
 
     input
-        .write_all(b"{\"v\":1,\"type\":\"vault_locked\",\"epoch\":1}\n")
+        .write_all(b"{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}\n")
         .unwrap();
     input.flush().unwrap();
     let locked = read_json_line(&mut output);
@@ -408,7 +468,7 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
     let started = std::time::Instant::now();
     writeln!(
         input,
-        "{{\"v\":1,\"type\":\"unlock_cancelled\",\"requestId\":{request_id},\"reason\":\"user-cancelled\"}}"
+        "{{\"v\":2,\"type\":\"unlock_cancelled\",\"requestId\":{request_id},\"reason\":\"user-cancelled\"}}"
     )
     .unwrap();
     input.flush().unwrap();
@@ -424,13 +484,13 @@ fn a_locked_vault_still_lists_identities_but_refuses_to_sign() {
 
     // Logout takes the public projection with it.
     input
-        .write_all(b"{\"v\":1,\"type\":\"vault_logged_out\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"vault_logged_out\"}\n")
         .unwrap();
     input.flush().unwrap();
     assert_eq!(identity_count(&socket), 0);
 
     input
-        .write_all(b"{\"v\":1,\"type\":\"shutdown\"}\n")
+        .write_all(b"{\"v\":2,\"type\":\"shutdown\"}\n")
         .unwrap();
     input.flush().unwrap();
     assert!(child.wait().unwrap().success());
@@ -448,7 +508,7 @@ fn a_locked_sign_request_raises_unlock_then_approval() {
     agent.load_key(&key, 1, "0123456789abcdef0123456789abcdef");
     assert_eq!(identity_count(&agent.socket), 1);
 
-    agent.send("{\"v\":1,\"type\":\"vault_locked\",\"epoch\":1}");
+    agent.send("{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}");
     assert_eq!(agent.read()["type"], "locked");
 
     // The client blocks on its request while the panel is asked to unlock.
@@ -482,7 +542,7 @@ fn a_locked_sign_request_raises_unlock_then_approval() {
     );
 
     agent.send(&format!(
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{approval_id},\"grantSeconds\":0}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{approval_id},\"grantSeconds\":0}}"
     ));
     let response = client.join().unwrap();
     assert_eq!(
@@ -503,7 +563,7 @@ fn an_approval_given_during_a_load_is_honoured_when_keys_arrive() {
     let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
     let public_blob = key.public_key().to_bytes().unwrap();
     agent.load_key(&key, 1, "0123456789abcdef0123456789abcdef");
-    agent.send("{\"v\":1,\"type\":\"vault_locked\",\"epoch\":1}");
+    agent.send("{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}");
     assert_eq!(agent.read()["type"], "locked");
 
     let socket = agent.socket.clone();
@@ -520,7 +580,7 @@ fn an_approval_given_during_a_load_is_honoured_when_keys_arrive() {
 
     // Approved against the held request, before any load has been started.
     agent.send(&format!(
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
     ));
 
     // The load lands afterwards and releases the request without asking again.
@@ -543,7 +603,7 @@ fn an_approval_given_during_a_load_still_requires_the_approved_key() {
     let other = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
     let public_blob = approved.public_key().to_bytes().unwrap();
     agent.load_key(&approved, 1, "0123456789abcdef0123456789abcdef");
-    agent.send("{\"v\":1,\"type\":\"vault_locked\",\"epoch\":1}");
+    agent.send("{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}");
     assert_eq!(agent.read()["type"], "locked");
 
     let socket = agent.socket.clone();
@@ -557,7 +617,7 @@ fn an_approval_given_during_a_load_still_requires_the_approved_key() {
     let unlock = agent.read();
     let request_id = unlock["requestId"].as_u64().unwrap();
     agent.send(&format!(
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0}}"
     ));
 
     // A vault that now holds a different key entirely.
@@ -568,6 +628,92 @@ fn an_approval_given_during_a_load_still_requires_the_approved_key() {
         "the approved key is gone, so the signature must fail closed"
     );
     agent.shutdown();
+}
+
+#[test]
+fn revoking_pre_load_approvals_preserves_one_signature_without_a_grant() {
+    for (mode, seconds, until_lock) in [
+        ("once", 0, false),
+        ("timed", 120, false),
+        ("until-lock", 0, true),
+    ] {
+        let mut agent = TestAgent::start();
+        let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
+        let public_blob = key.public_key().to_bytes().unwrap();
+        agent.load_key(&key, 1, "0123456789abcdef0123456789abcdef");
+        agent.send("{\"v\":2,\"type\":\"vault_locked\",\"epoch\":1}");
+        assert_eq!(agent.read()["type"], "locked");
+        let mut client = UnixStream::connect(&agent.socket).unwrap();
+        client.write_all(&sign_request(&public_blob)).unwrap();
+        let unlock = agent.read();
+        let request_id = unlock["requestId"].as_u64().unwrap();
+        agent.send(&format!(
+            "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":{seconds},\"untilScreenLock\":{until_lock}}}"
+        ));
+        agent.send("{\"v\":2,\"type\":\"revoke_grants\"}");
+        agent.load_key(&key, 2, "fedcba9876543210fedcba9876543210");
+        assert_eq!(agent.read()["type"], "request_cancelled");
+        assert_eq!(
+            read_agent_frame(&mut client)[4],
+            14,
+            "held {mode} approval must sign once"
+        );
+
+        // No grants_changed event or automatic signature: revoke left no grant.
+        client.write_all(&sign_request(&public_blob)).unwrap();
+        let approval = agent.read();
+        assert_eq!(
+            approval["type"], "approval_required",
+            "{mode} must leave no grant"
+        );
+        let id = approval["requestId"].as_u64().unwrap();
+        agent.send(&format!("{{\"v\":2,\"type\":\"deny\",\"requestId\":{id}}}"));
+        assert_eq!(read_agent_frame(&mut client)[4], 5);
+        agent.shutdown();
+    }
+}
+
+#[test]
+fn until_lock_grants_report_revocation_and_require_fresh_approval() {
+    for revoke_type in ["revoke_grant", "revoke_grants"] {
+        let mut agent = TestAgent::start();
+        let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
+        let public_blob = key.public_key().to_bytes().unwrap();
+        agent.load_key(&key, 1, "0123456789abcdef0123456789abcdef");
+        let mut client = UnixStream::connect(&agent.socket).unwrap();
+        client.write_all(&sign_request(&public_blob)).unwrap();
+        let approval = agent.read();
+        let request_id = approval["requestId"].as_u64().unwrap();
+        agent.send(&format!(
+            "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":0,\"untilScreenLock\":true}}"
+        ));
+        assert_eq!(read_agent_frame(&mut client)[4], 14);
+        let grants = agent.read();
+        assert_eq!(grants["type"], "grants_changed");
+        assert_eq!(grants["grants"][0]["untilScreenLock"], true);
+        assert!(grants["grants"][0]["expiresInSec"].is_null());
+        let grant_id = grants["grants"][0]["grantId"].as_u64().unwrap();
+        let mut fresh_client = UnixStream::connect(&agent.socket).unwrap();
+        fresh_client.write_all(&sign_request(&public_blob)).unwrap();
+        assert_eq!(read_agent_frame(&mut fresh_client)[4], 14);
+        if revoke_type == "revoke_grant" {
+            agent.send(&format!(
+                "{{\"v\":2,\"type\":\"revoke_grant\",\"grantId\":{grant_id}}}"
+            ));
+        } else {
+            agent.send("{\"v\":2,\"type\":\"revoke_grants\"}");
+        }
+        let revoked = agent.read();
+        assert_eq!(revoked["type"], "grants_changed");
+        assert!(revoked["grants"].as_array().unwrap().is_empty());
+        fresh_client.write_all(&sign_request(&public_blob)).unwrap();
+        let approval = agent.read();
+        assert_eq!(approval["type"], "approval_required");
+        let id = approval["requestId"].as_u64().unwrap();
+        agent.send(&format!("{{\"v\":2,\"type\":\"deny\",\"requestId\":{id}}}"));
+        assert_eq!(read_agent_frame(&mut fresh_client)[4], 5);
+        agent.shutdown();
+    }
 }
 
 /// A freshly started companion has no public cache, so `ssh-add -L` is empty
@@ -582,7 +728,7 @@ fn unlock_on_demand_raises_an_unlock_for_an_empty_identity_listing() {
     // Off by default: an empty cache answers empty and asks for nothing.
     assert_eq!(identity_count(&agent.socket), 0);
 
-    agent.send("{\"v\":1,\"type\":\"options\",\"unlockOnDemand\":true}");
+    agent.send("{\"v\":2,\"type\":\"options\",\"unlockOnDemand\":true}");
     agent.drain_control();
 
     let socket = agent.socket.clone();
@@ -610,7 +756,7 @@ fn unlock_on_demand_raises_an_unlock_for_an_empty_identity_listing() {
 fn concurrent_identity_listings_coalesce_into_one_unlock() {
     let mut agent = TestAgent::start();
     let key = PrivateKey::random(&mut OsRng, Algorithm::Ed25519).unwrap();
-    agent.send("{\"v\":1,\"type\":\"options\",\"unlockOnDemand\":true}");
+    agent.send("{\"v\":2,\"type\":\"options\",\"unlockOnDemand\":true}");
     agent.drain_control();
 
     let mut clients = Vec::new();
@@ -684,7 +830,7 @@ fn granting_and_revoking_announce_the_live_set() {
     let request_id = approval["requestId"].as_u64().unwrap();
     assert_eq!(approval["grantOffered"], true);
     agent.send(&format!(
-        "{{\"v\":1,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":120}}"
+        "{{\"v\":2,\"type\":\"approve\",\"requestId\":{request_id},\"grantSeconds\":120}}"
     ));
 
     let changed = agent.read();
@@ -704,7 +850,7 @@ fn granting_and_revoking_announce_the_live_set() {
     assert_eq!(second[4], 14, "a live grant signs without prompting again");
 
     agent.send(&format!(
-        "{{\"v\":1,\"type\":\"revoke_grant\",\"grantId\":{grant_id}}}"
+        "{{\"v\":2,\"type\":\"revoke_grant\",\"grantId\":{grant_id}}}"
     ));
     let revoked = agent.read();
     assert_eq!(revoked["type"], "grants_changed");
@@ -734,7 +880,7 @@ fn version_and_self_test_answer_without_touching_the_system() {
         "--version must report the crate version, got {text:?}"
     );
     assert!(
-        text.contains("protocol 1"),
+        text.contains("protocol 2"),
         "--version must report the control protocol version, got {text:?}"
     );
 
@@ -813,7 +959,7 @@ impl TestAgent {
             .unwrap();
         let mut input = child.stdin.take().unwrap();
         let mut output = BufReader::new(child.stdout.take().unwrap());
-        input.write_all(b"{\"v\":1,\"type\":\"hello\"}\n").unwrap();
+        input.write_all(b"{\"v\":2,\"type\":\"hello\"}\n").unwrap();
         input.flush().unwrap();
         let ready = read_json_line(&mut output);
         let socket = PathBuf::from(ready["socketPath"].as_str().unwrap());
@@ -866,7 +1012,7 @@ impl TestAgent {
     /// with an empty list instead of raising an unlock, and the test waited
     /// for a message that was never going to come.
     fn drain_control(&mut self) {
-        self.send("{\"v\":1,\"type\":\"vault_locked\",\"epoch\":0}");
+        self.send("{\"v\":2,\"type\":\"vault_locked\",\"epoch\":0}");
         let acknowledged = self.read();
         assert_eq!(
             acknowledged["type"], "locked",
@@ -886,7 +1032,7 @@ impl TestAgent {
 
     fn load_key(&mut self, key: &PrivateKey, epoch: u64, nonce: &str) {
         self.send(&format!(
-            "{{\"v\":1,\"type\":\"key_load_begin\",\"epoch\":{epoch},\"loadId\":\"{nonce}\"}}"
+            "{{\"v\":2,\"type\":\"key_load_begin\",\"epoch\":{epoch},\"loadId\":\"{nonce}\"}}"
         ));
         let payload = serde_json::json!({"loadId": nonce, "items": [{
             "itemId": "disposable", "name": "Disposable test key",
@@ -902,7 +1048,7 @@ impl TestAgent {
         writer.write_all(b"\n").unwrap();
         drop(writer);
         self.send(&format!(
-            "{{\"v\":1,\"type\":\"key_load_end\",\"epoch\":{epoch},\"status\":\"ok\"}}"
+            "{{\"v\":2,\"type\":\"key_load_end\",\"epoch\":{epoch},\"status\":\"ok\"}}"
         ));
         // The validated public set arrives one message per key ahead of
         // keys_loaded, so the panel holds the whole projection before it is
@@ -927,7 +1073,7 @@ impl TestAgent {
     }
 
     fn shutdown(&mut self) {
-        self.send("{\"v\":1,\"type\":\"shutdown\"}");
+        self.send("{\"v\":2,\"type\":\"shutdown\"}");
         let status = self.child.wait().unwrap();
         self.alive
             .store(false, std::sync::atomic::Ordering::Relaxed);

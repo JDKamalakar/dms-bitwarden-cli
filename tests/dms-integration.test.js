@@ -3,12 +3,16 @@ const assert = require("node:assert/strict");
 const { test } = require("node:test");
 const source = fs.readFileSync(require("node:path").join(__dirname, "../Panel.qml"), "utf8");
 const body = source.match(/function onScreenLockState\(\) \{([\s\S]*?)\n  \}/)[1];
-const apply = new Function("root", "lockOnScreenLock", "status", "lockVault", body);
-for (const locked of [true, false]) for (const enabled of [true, false]) {
-  test(`DMS lock=${locked}, auto-lock=${enabled}`, () => {
-    let calls = 0;
-    apply({screenIsLocked: locked}, enabled, "unlocked", () => calls++);
-    assert.equal(calls, locked && enabled ? 1 : 0);
+const apply = new Function("root", "lockOnScreenLock", "status", "lockVault", "sshAgentProc", "revokeAllSshGrants", body);
+for (const enabled of [true, false]) for (const running of [true, false]) {
+  test(`DMS screen lock, auto-lock=${enabled}, helper=${running}`, () => {
+    const calls = [];
+    apply({screenIsLocked: true}, enabled, "unlocked", () => calls.push("lock"),
+      {running}, () => calls.push("revoke"));
+    assert.deepEqual(calls, [
+      ...(running ? ["revoke"] : []),
+      ...(enabled ? ["lock"] : [])
+    ]);
   });
 }
 test("SSH authorization reads the live DMS state without stale polling", () => {

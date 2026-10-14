@@ -7,6 +7,10 @@ Date: 2026-08-27
 Accepted. Supersedes the grant-scoping rule in `docs/ideas/ssh-agent.md`
 ("Bounded approval grants"), which this decision deliberately relaxes.
 
+> **Amended by `docs/decisions/0005-screen-lock-bounded-grants.md`.** The
+> time-window bound and "0 disables grants" rule no longer apply when
+> `sshAgentApprovalUntilScreenLock` is on.
+
 ## Context
 
 The design specified that an approval grant is "scoped to **one key and one

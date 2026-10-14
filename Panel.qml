@@ -61,6 +61,7 @@ Item {
   readonly property bool sshAgentEnabled: Model.boolSetting("sshAgentEnabled", setting("sshAgentEnabled", false))
   readonly property bool sshAgentUnlockOnDemand: Model.boolSetting("sshAgentUnlockOnDemand", setting("sshAgentUnlockOnDemand", false))
   readonly property bool sshAgentApprovalPopup: Model.boolSetting("sshAgentApprovalPopup", setting("sshAgentApprovalPopup", true))
+  readonly property bool sshAgentApprovalUntilScreenLock: Model.boolSetting("sshAgentApprovalUntilScreenLock", setting("sshAgentApprovalUntilScreenLock", false))
   readonly property int sshAgentApprovalWindowSec: Model.intSetting("sshAgentApprovalWindowSec", setting("sshAgentApprovalWindowSec"))
 
   // The SSH sections' own section header. PanelSectionHeader comes from the
@@ -828,7 +829,7 @@ Item {
   }
 
   function showSshApproval(message) {
-    root.sshPrompt = Model.sshAgentPromptView(message, root.sshAgentApprovalWindowSec)
+    root.sshPrompt = Model.sshAgentPromptView(message, root.sshAgentApprovalWindowSec, root.sshAgentApprovalUntilScreenLock)
     root.sshPromptStartedMs = Date.now()
     root.sshPromptRemainingSec = Math.ceil(Model.sshAgentRequestDeadlineMs() / 1000)
     if (root.sshAgentApprovalPopup) {
@@ -923,9 +924,13 @@ Item {
     root.errorMessage = ""
   }
 
-  function approveSshRequest(grantSeconds) {
+  function approveSshRequest(grantSeconds, untilScreenLock) {
     if (!sshPrompt) return
-    sshAgentWrite(Model.sshAgentApproveLine(sshPrompt.requestId, grantSeconds))
+    if (untilScreenLock === true && !root.sshAgentApprovalUntilScreenLock) {
+      grantSeconds = root.sshAgentApprovalWindowSec
+      untilScreenLock = false
+    }
+    sshAgentWrite(Model.sshAgentApproveLine(sshPrompt.requestId, grantSeconds, untilScreenLock))
     root.sshCooldown = Model.sshAgentCooldownAfter(root.sshCooldown, "approved", Date.now())
     noteSshCooldown()
     advanceSshPrompt()
@@ -3517,6 +3522,7 @@ Item {
       case "sshAgentEnabled": return sshAgentEnabled
       case "sshAgentUnlockOnDemand": return sshAgentUnlockOnDemand
       case "sshAgentApprovalPopup": return sshAgentApprovalPopup
+      case "sshAgentApprovalUntilScreenLock": return sshAgentApprovalUntilScreenLock
       case "sshAgentApprovalWindowSec": return sshAgentApprovalWindowSec
     }
     return entry.type === "bool" ? Model.boolSetting(entry.key, setting(entry.key, entry.defaultValue)) : Number(setting(entry.key, 0))
@@ -5551,6 +5557,8 @@ Item {
   readonly property bool screenIsLocked: IdleService.isShellLocked
 
   function onScreenLockState() {
+    // SSH approvals must end even when the vault stays unlocked.
+    if (root.screenIsLocked && sshAgentProc.running) revokeAllSshGrants()
     if (!lockOnScreenLock || status !== "unlocked") return
     if (root.screenIsLocked) lockVault()
   }

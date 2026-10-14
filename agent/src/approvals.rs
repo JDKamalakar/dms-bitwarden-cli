@@ -64,6 +64,14 @@ struct Pending {
     deadline_ms: u64,
 }
 
+/// The duration chosen explicitly at approval.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum GrantDuration {
+    Once,
+    Seconds(u64),
+    UntilScreenLock,
+}
+
 /// Public grant projection safe for panel status.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Grant {
@@ -71,7 +79,7 @@ pub struct Grant {
     pub public_blob: Vec<u8>,
     pub peer: PeerContext,
     pub epoch: u64,
-    pub expires_at_ms: u64,
+    pub expires_at_ms: Option<u64>,
 }
 
 /// Single-owner authorization state.
@@ -136,7 +144,7 @@ impl ApprovalManager {
     pub fn approve(
         &mut self,
         id: RequestId,
-        grant_seconds: u64,
+        duration: GrantDuration,
         now_ms: u64,
     ) -> Result<Authorization, ApprovalError> {
         self.expire(now_ms);
@@ -146,19 +154,23 @@ impl ApprovalManager {
             .position(|request| request.id == id)
             .ok_or(ApprovalError::UnknownRequest)?;
         let request = self.pending.remove(index);
-        if grant_seconds > 0 {
+        if duration != GrantDuration::Once {
             let grant_id = self.next_grant_id;
             self.next_grant_id = self
                 .next_grant_id
                 .checked_add(1)
                 .ok_or(ApprovalError::IdExhausted)?;
-            let duration_ms = grant_seconds.min(MAX_GRANT_SECONDS).saturating_mul(1_000);
+            let expires_at_ms = if let GrantDuration::Seconds(seconds) = duration {
+                Some(now_ms.saturating_add(seconds.min(MAX_GRANT_SECONDS).saturating_mul(1_000)))
+            } else {
+                None
+            };
             self.grants.push(Grant {
                 id: grant_id,
                 public_blob: request.public_blob.clone(),
                 peer: request.peer,
                 epoch: request.epoch,
-                expires_at_ms: now_ms.saturating_add(duration_ms),
+                expires_at_ms,
             });
         }
         Ok(Authorization {
@@ -173,7 +185,8 @@ impl ApprovalManager {
 
     pub fn expire(&mut self, now_ms: u64) {
         self.pending.retain(|request| request.deadline_ms > now_ms);
-        self.grants.retain(|grant| grant.expires_at_ms > now_ms);
+        self.grants
+            .retain(|grant| grant.expires_at_ms.is_none_or(|expiry| expiry > now_ms));
     }
 
     /// Lock, logout, account change, suspend, screen lock, disable, and epoch

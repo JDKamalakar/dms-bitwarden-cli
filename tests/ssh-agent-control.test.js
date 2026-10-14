@@ -91,11 +91,11 @@ eq("helper environment refuses an empty runtime dir", Model.sshAgentHelperEnv(""
 // Bounded NDJSON reader
 // -------------------------------------------------------------------------
 
-eq("hello is the versioned v1 handshake", Model.sshAgentHelloLine(), '{"v":1,"type":"hello"}\n')
-eq("shutdown is a versioned v1 line", Model.sshAgentShutdownLine(), '{"v":1,"type":"shutdown"}\n')
+eq("hello is the versioned v2 handshake", Model.sshAgentHelloLine(), '{"v":2,"type":"hello"}\n')
+eq("shutdown is a versioned v2 line", Model.sshAgentShutdownLine(), '{"v":2,"type":"shutdown"}\n')
 
 const ready = Model.parseAgentEvent(JSON.stringify({
-  v: 1, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
+  v: 2, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
   fifoPath: "/run/user/1000/qs-bitwarden-cli/ssh-keys.fifo", agentVersion: "0.1.0"
 }))
 eq("ready parses", ready.ok, true)
@@ -107,18 +107,18 @@ check("an empty line does not fail closed", Model.parseAgentEvent("").fatal === 
   JSON.stringify(Model.parseAgentEvent("")))
 eq("malformed JSON fails closed", Model.parseAgentEvent("{not json").code, "MALFORMED")
 check("malformed JSON is fatal", Model.parseAgentEvent("{not json").fatal === true, "not fatal")
-eq("a wrong version fails closed", Model.parseAgentEvent('{"v":2,"type":"ready"}').code, "VERSION_MISMATCH")
+eq("a wrong version fails closed", Model.parseAgentEvent('{"v":1,"type":"ready"}').code, "VERSION_MISMATCH")
 eq("a missing version fails closed", Model.parseAgentEvent('{"type":"ready"}').code, "VERSION_MISMATCH")
-eq("an unknown type fails closed", Model.parseAgentEvent('{"v":1,"type":"exec"}').code, "UNKNOWN_TYPE")
+eq("an unknown type fails closed", Model.parseAgentEvent('{"v":2,"type":"exec"}').code, "UNKNOWN_TYPE")
 eq("a non-object line fails closed", Model.parseAgentEvent('"ready"').code, "MALFORMED")
 eq("a ready missing its socket path fails closed",
-  Model.parseAgentEvent('{"v":1,"type":"ready","fifoPath":"/f","agentVersion":"1"}').code, "MALFORMED")
+  Model.parseAgentEvent('{"v":2,"type":"ready","fifoPath":"/f","agentVersion":"1"}').code, "MALFORMED")
 
-const overlong = '{"v":1,"type":"error","message":"' + "x".repeat(Model.sshAgentMaxLineBytes()) + '"}'
+const overlong = '{"v":2,"type":"error","message":"' + "x".repeat(Model.sshAgentMaxLineBytes()) + '"}'
 eq("an overlong line fails closed before parsing", Model.parseAgentEvent(overlong).code, "LINE_TOO_LONG")
-const multibyte = '{"v":1,"type":"error","message":"' + "é".repeat(Model.sshAgentMaxLineBytes() - 100) + '"}'
+const multibyte = '{"v":2,"type":"error","message":"' + "é".repeat(Model.sshAgentMaxLineBytes() - 100) + '"}'
 eq("the line cap counts bytes, not characters", Model.parseAgentEvent(multibyte).code, "LINE_TOO_LONG")
-const justUnder = JSON.stringify({ v: 1, type: "error", code: "X", message: "y".repeat(1024), recoverable: true })
+const justUnder = JSON.stringify({ v: 2, type: "error", code: "X", message: "y".repeat(1024), recoverable: true })
 eq("a line under the cap still parses", Model.parseAgentEvent(justUnder).ok, true)
 
 // -------------------------------------------------------------------------
@@ -126,7 +126,7 @@ eq("a line under the cap still parses", Model.parseAgentEvent(justUnder).ok, tru
 // -------------------------------------------------------------------------
 
 const readyLine = JSON.stringify({
-  v: 1, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
+  v: 2, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
   fifoPath: "/run/user/1000/qs-bitwarden-cli/ssh-keys.fifo", agentVersion: "0.1.0"
 })
 
@@ -176,7 +176,7 @@ check("the gate stays closed while handshaking", handshaking.state.gateOpen === 
   JSON.stringify(handshaking.state))
 
 const live = reachReady(0)
-eq("a v1 ready completes the handshake", live.state.phase, "ready")
+eq("a v2 ready completes the handshake", live.state.phase, "ready")
 check("ready opens the signing gate", live.state.gateOpen === true, JSON.stringify(live.state))
 eq("ready records the socket path", live.state.socketPath, "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock")
 eq("ready records the fifo path", live.state.fifoPath, "/run/user/1000/qs-bitwarden-cli/ssh-keys.fifo")
@@ -187,7 +187,7 @@ check("no reduction ever asks QML to wait",
 const badVersion = drive(Model.sshAgentInitialState(), [
   { kind: "enabled", value: true, nowMs: 0 },
   { kind: "started", nowMs: 1 },
-  { kind: "line", line: '{"v":2,"type":"ready","socketPath":"/s","fifoPath":"/f","agentVersion":"9"}', nowMs: 2 }
+  { kind: "line", line: '{"v":1,"type":"ready","socketPath":"/s","fifoPath":"/f","agentVersion":"9"}', nowMs: 2 }
 ])
 eq("a version mismatch stops the helper", badVersion.last.stop, true)
 eq("a version mismatch is reported", badVersion.state.errorCode, "VERSION_MISMATCH")
@@ -209,7 +209,7 @@ check("a blank line leaves the gate open", blank.state.gateOpen === true, JSON.s
 
 const passthrough = drive(reachReady(0).state, [{
   kind: "line", nowMs: 100,
-  line: JSON.stringify({ v: 1, type: "keys_loaded", epoch: 7, keyCount: 2, skipped: [] })
+  line: JSON.stringify({ v: 2, type: "keys_loaded", epoch: 7, keyCount: 2, skipped: [] })
 }])
 eq("a live event stays ready", passthrough.state.phase, "ready")
 eq("a live event reaches the panel", passthrough.last.message.type, "keys_loaded")
@@ -220,7 +220,7 @@ check("a duplicate ready closes the gate", secondReady.state.gateOpen === false,
   JSON.stringify(secondReady.state))
 
 const earlyEvent = drive(handshaking.state, [{
-  kind: "line", nowMs: 5, line: JSON.stringify({ v: 1, type: "locked", epoch: 1 })
+  kind: "line", nowMs: 5, line: JSON.stringify({ v: 2, type: "locked", epoch: 1 })
 }])
 eq("an event before ready is a protocol violation", earlyEvent.state.errorCode, "PROTOCOL")
 
@@ -403,7 +403,7 @@ let seen = ""
 process.stdin.on("data", d => {
   seen += d.toString()
   if (seen.indexOf('"hello"') >= 0) {
-    process.stdout.write(JSON.stringify({ v: 1, type: "ready",
+    process.stdout.write(JSON.stringify({ v: 2, type: "ready",
       socketPath: "/run/fake/ssh-agent.sock", fifoPath: "/run/fake/ssh-keys.fifo",
       agentVersion: "0.0.0-fake" }) + "\\n")
     seen = ""
@@ -431,7 +431,7 @@ let seen = ""
 process.stdin.on("data", d => {
   seen += d.toString()
   if (seen.indexOf('"hello"') >= 0) {
-    process.stdout.write('{"v":1,"type":"error","code":"X","message":"' + "z".repeat(200000) + '"}\\n')
+    process.stdout.write('{"v":2,"type":"error","code":"X","message":"' + "z".repeat(200000) + '"}\\n')
     seen = ""
   }
 })

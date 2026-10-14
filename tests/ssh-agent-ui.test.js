@@ -60,7 +60,7 @@ for (const [type, body] of [
   ["request_cancelled", { requestId: 42, reason: "withdrawn" }],
   ["grants_changed", { grants: [] }]
 ]) {
-  const parsed = Model.parseAgentEvent(JSON.stringify(Object.assign({ v: 1, type: type }, body)))
+  const parsed = Model.parseAgentEvent(JSON.stringify(Object.assign({ v: 2, type: type }, body)))
   eq(`${type} parses`, parsed.ok, true)
   eq(`${type} keeps its type`, parsed.ok && parsed.message.type, type)
 }
@@ -70,27 +70,32 @@ for (const [type, body] of [
 // -------------------------------------------------------------------------
 
 eq("approve once carries a zero window", Model.sshAgentApproveLine(42, 0),
-  JSON.stringify({ v: 1, type: "approve", requestId: 42, grantSeconds: 0 }) + "\n")
+  JSON.stringify({ v: 2, type: "approve", requestId: 42, grantSeconds: 0 }) + "\n")
 eq("approve for a process carries its window", Model.sshAgentApproveLine(42, 120),
-  JSON.stringify({ v: 1, type: "approve", requestId: 42, grantSeconds: 120 }) + "\n")
+  JSON.stringify({ v: 2, type: "approve", requestId: 42, grantSeconds: 120 }) + "\n")
 eq("a grant window is clamped to the documented cap", Model.sshAgentApproveLine(42, 99999),
-  JSON.stringify({ v: 1, type: "approve", requestId: 42, grantSeconds: 900 }) + "\n")
+  JSON.stringify({ v: 2, type: "approve", requestId: 42, grantSeconds: 900 }) + "\n")
 eq("a negative window approves once instead", Model.sshAgentApproveLine(42, -5),
-  JSON.stringify({ v: 1, type: "approve", requestId: 42, grantSeconds: 0 }) + "\n")
-eq("deny is a versioned v1 line", Model.sshAgentDenyLine(42),
-  JSON.stringify({ v: 1, type: "deny", requestId: 42 }) + "\n")
+  JSON.stringify({ v: 2, type: "approve", requestId: 42, grantSeconds: 0 }) + "\n")
+eq("until-lock approval is explicit and replaces any timed window", Model.sshAgentApproveLine(42, 99999, true),
+  JSON.stringify({ v: 2, type: "approve", requestId: 42, grantSeconds: 0, untilScreenLock: true }) + "\n")
+eq("a false until-lock flag leaves the timed form unchanged", Model.sshAgentApproveLine(42, 120, false),
+  Model.sshAgentApproveLine(42, 120))
+eq("an invalid until-lock request id yields no line", Model.sshAgentApproveLine(-1, 120, true), "")
+eq("deny is a versioned v2 line", Model.sshAgentDenyLine(42),
+  JSON.stringify({ v: 2, type: "deny", requestId: 42 }) + "\n")
 eq("a dismissed unlock is reported as user-cancelled", Model.sshAgentUnlockCancelledLine(41),
-  JSON.stringify({ v: 1, type: "unlock_cancelled", requestId: 41, reason: "user-cancelled" }) + "\n")
+  JSON.stringify({ v: 2, type: "unlock_cancelled", requestId: 41, reason: "user-cancelled" }) + "\n")
 // The companion cannot read shell.json, so the panel has to tell it.
 eq("unlock-on-demand is sent to the companion", Model.sshAgentOptionsLine(true),
-  JSON.stringify({ v: 1, type: "options", unlockOnDemand: true }) + "\n")
+  JSON.stringify({ v: 2, type: "options", unlockOnDemand: true }) + "\n")
 eq("and its default off state is sent too", Model.sshAgentOptionsLine(false),
-  JSON.stringify({ v: 1, type: "options", unlockOnDemand: false }) + "\n")
+  JSON.stringify({ v: 2, type: "options", unlockOnDemand: false }) + "\n")
 eq("anything that is not true is off", Model.sshAgentOptionsLine(undefined),
-  JSON.stringify({ v: 1, type: "options", unlockOnDemand: false }) + "\n")
+  JSON.stringify({ v: 2, type: "options", unlockOnDemand: false }) + "\n")
 
 eq("a single grant is revoked by id", Model.sshAgentRevokeGrantLine(9),
-  JSON.stringify({ v: 1, type: "revoke_grant", grantId: 9 }) + "\n")
+  JSON.stringify({ v: 2, type: "revoke_grant", grantId: 9 }) + "\n")
 eq("an invalid request id yields no line", Model.sshAgentApproveLine("nope", 0), "")
 eq("an invalid grant id yields no line", Model.sshAgentRevokeGrantLine(-1), "")
 
@@ -99,7 +104,7 @@ eq("an invalid grant id yields no line", Model.sshAgentRevokeGrantLine(-1), "")
 // -------------------------------------------------------------------------
 
 const request = {
-  v: 1, type: "approval_required", requestId: 42, keyId: "item-1",
+  v: 2, type: "approval_required", requestId: 42, keyId: "item-1",
   keyName: "personal ed25519", fingerprint: "SHA256:9wKk2nQ8xR1vLm4pZc7dYtE0",
   pid: 48213, processPath: "/usr/bin/ssh", operation: "ssh-sign",
   forwarded: false, grantOffered: true
@@ -130,6 +135,19 @@ const noGrant = Model.sshAgentPromptView(request, 0)
 eq("a zero window offers no grant", noGrant.grantOffered, false)
 const refusedGrant = Model.sshAgentPromptView(Object.assign({}, request, { grantOffered: false }), 120)
 eq("a companion that offers no grant is respected", refusedGrant.grantOffered, false)
+
+for (const window of [0, 120, 99999]) {
+  const untilLock = Model.sshAgentPromptView(request, window, true)
+  eq("until-lock grants are offered regardless of the window " + window, untilLock.grantOffered, true)
+  eq("until-lock grants have no timed duration", untilLock.grantSeconds, 0)
+  eq("until-lock grants carry their explicit mode", untilLock.grantUntilScreenLock, true)
+}
+eq("off retains the timed label", Model.sshAgentPromptView(request, 120, false).grantLabel, view.grantLabel)
+eq("off with zero offers no grant", Model.sshAgentPromptView(request, 0, false).grantOffered, false)
+eq("until-lock mode respects a refused grant",
+  Model.sshAgentPromptView(Object.assign({}, request, { grantOffered: false }), 0, true).grantOffered, false)
+eq("until-lock mode rejects forwarding",
+  Model.sshAgentPromptView(Object.assign({}, request, { forwarded: true }), 120, true).grantOffered, false)
 
 // Forwarding is rejected in v1; if one ever arrives it is called out, not
 // shown as ordinary context.
@@ -202,6 +220,14 @@ eq("an unstamped view survives re-derivation rather than vanishing",
 eq("and so does every view before the first tick",
   Model.sshAgentGrantsAt(announced, 0).length, 1)
 eq("a malformed set re-derives to nothing", Model.sshAgentGrantsAt(null, 1).length, 0)
+
+const untilLockGrants = Model.sshAgentGrantViews([{ grantId: 11, untilScreenLock: true, expiresInSec: null }], 10_000)
+eq("until-lock grants have no countdown deadline", untilLockGrants[0].expiresAtMs, null)
+eq("until-lock grants carry no meaningless remaining seconds", "remainingSec" in untilLockGrants[0], false)
+eq("until-lock grants carry their explicit mode", untilLockGrants[0].untilScreenLock, true)
+eq("until-lock grants survive clock ticks", Model.sshAgentGrantsAt(untilLockGrants, 999_999_999).length, 1)
+eq("until-lock grant mode survives clock ticks",
+  Model.sshAgentGrantsAt(untilLockGrants, 999_999_999)[0].untilScreenLock, true)
 
 const warning = Model.sshAgentDevelopmentHelperWarning(null)
 check("local helper notice tells users to rebuild after updates", /locally built/.test(warning) && /Rebuild/.test(warning), warning)
@@ -323,6 +349,24 @@ const popupSrc = fs.existsSync(path.join(repoRoot, "SshApprovalPopup.qml"))
   ? readEnglishQml(path.join(repoRoot, "SshApprovalPopup.qml")) : ""
 const unlockSrc = fs.existsSync(path.join(repoRoot, "SshUnlockScreen.qml"))
   ? readEnglishQml(path.join(repoRoot, "SshUnlockScreen.qml")) : ""
+
+const approveBody = panelSrc.match(/function approveSshRequest\(grantSeconds, untilScreenLock\) \{([\s\S]*?)\n  \}/)[1]
+const approve = new Function("root", "sshPrompt", "Model", "sshAgentWrite", "noteSshCooldown", "advanceSshPrompt", "grantSeconds", "untilScreenLock", approveBody)
+for (const enabled of [false, true]) for (const window of [0, 60, 120]) {
+  for (const grantAction of [false, true]) {
+    const prompt = Model.sshAgentPromptView(request, 120, true)
+    const root = { sshAgentApprovalUntilScreenLock: enabled, sshAgentApprovalWindowSec: window,
+      sshCooldown: Model.sshAgentCooldownInitial() }
+    let sent
+    let advanced = 0
+    approve(root, prompt, Model, line => { sent = JSON.parse(line) }, () => {}, () => advanced++,
+      0, grantAction)
+    eq("click uses the current until-lock setting", sent.untilScreenLock === true, enabled && grantAction)
+    eq("disabled until-lock falls back to the current window or once", sent.grantSeconds,
+      !enabled && grantAction ? window : 0)
+    eq("approval advances the prompt", advanced, 1)
+  }
+}
 
 // plainLabel() wraps its argument in a span when the text contains markup
 // characters, which a PlainText control then renders literally. The field is

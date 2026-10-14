@@ -1,4 +1,4 @@
-use qs_bitwarden_ssh_agent::approvals::{ApprovalError, ApprovalManager, Submit};
+use qs_bitwarden_ssh_agent::approvals::{ApprovalError, ApprovalManager, GrantDuration, Submit};
 use qs_bitwarden_ssh_agent::keystore::{CandidateItem, KeyStore};
 use qs_bitwarden_ssh_agent::peer::PeerContext;
 use rand_core::OsRng;
@@ -78,7 +78,7 @@ fn queue_is_bounded_expires_and_disconnect_cancels() {
     );
     approvals.disconnect(ids[0]);
     assert_eq!(
-        approvals.approve(ids[0], 0, 1_001),
+        approvals.approve(ids[0], GrantDuration::Once, 1_001),
         Err(ApprovalError::UnknownRequest)
     );
     // Derived from the lifetime rather than hardcoded, so changing the
@@ -93,7 +93,7 @@ fn queue_is_bounded_expires_and_disconnect_cancels() {
     approvals.expire(past_deadline);
     assert_eq!(approvals.pending_count(), 0);
     assert_eq!(
-        approvals.approve(ids[1], 0, past_deadline),
+        approvals.approve(ids[1], GrantDuration::Once, past_deadline),
         Err(ApprovalError::UnknownRequest)
     );
 }
@@ -109,9 +109,9 @@ fn approval_is_single_use_and_old_epoch_fails_at_final_check() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    let authorization = approvals.approve(id, 0, 1).unwrap();
+    let authorization = approvals.approve(id, GrantDuration::Once, 1).unwrap();
     assert_eq!(
-        approvals.approve(id, 0, 1),
+        approvals.approve(id, GrantDuration::Once, 1),
         Err(ApprovalError::UnknownRequest)
     );
     assert!(authorization.finalize(&store).is_some());
@@ -119,7 +119,7 @@ fn approval_is_single_use_and_old_epoch_fails_at_final_check() {
         .submit(7, &key, peer(101, 20, "/usr/bin/ssh"), 2)
         .unwrap()
     {
-        Submit::Pending(id) => approvals.approve(id, 0, 2).unwrap(),
+        Submit::Pending(id) => approvals.approve(id, GrantDuration::Once, 2).unwrap(),
         _ => unreachable!(),
     };
     store.lock(8);
@@ -141,8 +141,10 @@ fn grants_are_capped_and_bound_to_key_and_executable() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    approvals.approve(id, 10_000, 10).unwrap();
-    assert_eq!(approvals.grants()[0].expires_at_ms, 900_010);
+    approvals
+        .approve(id, GrantDuration::Seconds(10_000), 10)
+        .unwrap();
+    assert_eq!(approvals.grants()[0].expires_at_ms, Some(900_010));
     assert!(matches!(
         approvals.submit(3, &key, original.clone(), 20).unwrap(),
         Submit::Granted(_)
@@ -186,7 +188,9 @@ fn a_grant_never_crosses_to_another_user() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    approvals.approve(id, 120, 10).unwrap();
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 10)
+        .unwrap();
 
     let theirs = PeerContext::new(expected.wrapping_add(1), 201, 51, "/usr/bin/git").unwrap();
     assert!(
@@ -211,7 +215,9 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    approvals.approve(id, 120, 0).unwrap();
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
     let grant_id = approvals.grants()[0].id;
     approvals.revoke_grant(grant_id);
     assert!(approvals.grants().is_empty());
@@ -219,14 +225,18 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    approvals.approve(id, 120, 0).unwrap();
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
     approvals.revoke_peer(&p);
     assert!(approvals.grants().is_empty());
     let id = match approvals.submit(5, &key, p.clone(), 0).unwrap() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
-    approvals.approve(id, 120, 0).unwrap();
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
     approvals.invalidate_all();
     assert!(approvals.grants().is_empty());
     assert_eq!(approvals.pending_count(), 0);
@@ -234,6 +244,59 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
         approvals.submit(5, &key, p, 1).unwrap(),
         Submit::Pending(_)
     ));
+}
+
+#[test]
+fn until_screen_lock_grants_have_no_time_expiry() {
+    let uid = rustix::process::geteuid().as_raw();
+    let mut approvals = ApprovalManager::new(uid);
+    let original = peer(200, 50, "/usr/bin/ssh-keygen");
+    let Submit::Pending(id) = approvals.submit(3, b"key", original, 0).unwrap() else {
+        panic!("expected a pending request before approval");
+    };
+    approvals
+        .approve(id, GrantDuration::UntilScreenLock, 10)
+        .unwrap();
+    assert_eq!(approvals.grants()[0].expires_at_ms, None);
+    approvals.expire(u64::MAX);
+    assert_eq!(approvals.grants().len(), 1);
+}
+
+#[test]
+fn until_screen_lock_grants_are_removed_by_every_revocation() {
+    enum Revocation {
+        InvalidateAll,
+        AllGrants,
+        OneGrant,
+        Peer,
+    }
+    for revoke in [
+        Revocation::InvalidateAll,
+        Revocation::AllGrants,
+        Revocation::OneGrant,
+        Revocation::Peer,
+    ] {
+        let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+        let client = peer(200, 50, "/usr/bin/ssh-keygen");
+        let Submit::Pending(id) = approvals.submit(3, b"key", client.clone(), 0).unwrap() else {
+            panic!("expected a pending request before approval");
+        };
+        approvals
+            .approve(id, GrantDuration::UntilScreenLock, 10)
+            .unwrap();
+        let grant_id = approvals.grants()[0].id;
+        match revoke {
+            Revocation::InvalidateAll => approvals.invalidate_all(),
+            Revocation::AllGrants => approvals.revoke_all_grants(),
+            Revocation::OneGrant => approvals.revoke_grant(grant_id),
+            Revocation::Peer => approvals.revoke_peer(&client),
+        }
+        assert!(approvals.grants().is_empty());
+        assert!(matches!(
+            approvals.submit(3, b"key", client, 20).unwrap(),
+            Submit::Pending(_)
+        ));
+    }
 }
 
 #[test]

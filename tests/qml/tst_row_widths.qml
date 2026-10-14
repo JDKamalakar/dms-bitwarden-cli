@@ -292,6 +292,18 @@ TestCase {
       + "shorten the labels:\n    " + offenders.join("\n    "))
   }
 
+  function test_until_screen_lock_button_fits_data() {
+    return [{tag: "English", locale: "en"}, {tag: "German", locale: "de"}]
+  }
+
+  function test_until_screen_lock_button_fits(data) {
+    var label = "Approve for this program · until screen lock"
+    if (data.locale === "de") label = JSON.parse(readFile("translations/de.json")).bitwarden[label]
+    var width = buttonWidth({label: label, icon: "󰔟", fontSize: 11, paddingX: 10})
+    verify(width <= popupBudget, "until-lock button needs " + width.toFixed(1) + "px of " + popupBudget)
+    verify(width <= panelBudget, "until-lock button does not fit the anchored panel")
+  }
+
   // The header that started this. Pinned and unpinned are measured separately
   // because only the pinned label overflowed, which is why it survived review.
   function test_the_detail_header_fits_with_the_suggestion_button_showing() {

@@ -33,6 +33,7 @@
       "sshAgentEnabled": false,
       "sshAgentUnlockOnDemand": false,
       "sshAgentApprovalPopup": true,
+      "sshAgentApprovalUntilScreenLock": false,
       "sshAgentApprovalWindowSec": 120
     },
     "schema": [
@@ -142,6 +143,13 @@
         "label": "Use centered approval popup",
         "description": "Show SSH unlock and signing requests in a transient card in the middle of the screen instead of opening the anchored panel. Disable to show them in the panel.",
         "defaultValue": true
+      },
+      {
+        "key": "sshAgentApprovalUntilScreenLock",
+        "type": "boolean",
+        "label": "Approve until the screen locks",
+        "description": "Replace the time window with a grant that ends on screen lock, vault lock, logout or revoke. Screen lock always revokes grants. Suspend revokes them through vault lock only if locking on suspend is enabled.",
+        "defaultValue": false
       },
       {
         "key": "sshAgentApprovalWindowSec",
