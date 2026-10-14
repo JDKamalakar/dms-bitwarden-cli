@@ -226,7 +226,7 @@ Column {
         width: parent.width - Style.space(110)
         text: modelData.keyName + "  ·  "
           + modelData.processName
-          + "  ·  " + modelData.remainingLabel
+          + "  ·  " + (modelData.untilScreenLock ? Tr.text("until screen lock") : modelData.remainingLabel)
       }
 
       Button {

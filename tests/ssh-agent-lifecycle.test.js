@@ -257,8 +257,8 @@ check("a departed helper's key count is not left standing",
 // Control lines
 // -------------------------------------------------------------------------
 
-eq("revoke_grants is a versioned v1 line", Model.sshAgentRevokeGrantsLine(),
-  JSON.stringify({ v: 1, type: "revoke_grants" }) + "\n")
+eq("revoke_grants is a versioned v2 line", Model.sshAgentRevokeGrantsLine(),
+  JSON.stringify({ v: 2, type: "revoke_grants" }) + "\n")
 
 for (const line of [Model.sshAgentVaultLockedLine(3), Model.sshAgentLoggedOutLine(),
                     Model.sshAgentRevokeGrantsLine()]) {

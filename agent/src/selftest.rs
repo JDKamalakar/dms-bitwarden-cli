@@ -52,7 +52,7 @@ pub fn run() -> i32 {
             ok: frame_bounds(),
         },
         Check {
-            name: "control protocol v1 accepted, other versions refused",
+            name: "control protocol v2 accepted, other versions refused",
             ok: control_versions(),
         },
     ];
@@ -146,9 +146,9 @@ fn frame_bounds() -> bool {
 /// The control channel is versioned so an old bundled binary fails clearly
 /// after a plugin update rather than misreading a newer panel.
 fn control_versions() -> bool {
-    let hello = parse_control_line(br#"{"v":1,"type":"hello"}"#);
-    let wrong_version = parse_control_line(br#"{"v":2,"type":"hello"}"#);
-    let unknown = parse_control_line(br#"{"v":1,"type":"exec"}"#);
+    let hello = parse_control_line(br#"{"v":2,"type":"hello"}"#);
+    let wrong_version = parse_control_line(br#"{"v":1,"type":"hello"}"#);
+    let unknown = parse_control_line(br#"{"v":2,"type":"exec"}"#);
     let mut overlong = vec![b'{'; MAX_CONTROL_LINE + 1];
     overlong.push(b'}');
 

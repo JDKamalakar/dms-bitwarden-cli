@@ -3744,7 +3744,7 @@ function vaultListFailureMessage(stderrText, deps, mode) {
 // Matches MAX_CONTROL_LINE in the companion. The panel enforces the same
 // ceiling on the way back so a helper that has lost its mind cannot make the
 // shell allocate without bound.
-var SSH_AGENT_CONTROL_VERSION = 1
+var SSH_AGENT_CONTROL_VERSION = 2
 var SSH_AGENT_MAX_LINE_BYTES = 64 * 1024
 
 // The development helper, built by `cargo build --manifest-path agent/Cargo.toml`.
@@ -4594,13 +4594,17 @@ function isRequestId(value) {
   return typeof value === "number" && isFinite(value) && Math.floor(value) === value && value >= 0
 }
 
-function sshAgentApproveLine(requestId, grantSeconds) {
+function sshAgentApproveLine(requestId, grantSeconds, untilScreenLock) {
   if (!isRequestId(requestId)) return ""
-  var seconds = Math.floor(Number(grantSeconds))
-  if (!isFinite(seconds) || seconds < 0) seconds = 0
-  seconds = Math.min(seconds, SSH_AGENT_APPROVAL_WINDOW_MAX_SEC)
-  return JSON.stringify({ v: SSH_AGENT_CONTROL_VERSION, type: "approve",
-    requestId: requestId, grantSeconds: seconds }) + "\n"
+  var message = { v: SSH_AGENT_CONTROL_VERSION, type: "approve", requestId: requestId, grantSeconds: 0 }
+  if (untilScreenLock === true) {
+    message.untilScreenLock = true
+  } else {
+    var seconds = Math.floor(Number(grantSeconds))
+    if (!isFinite(seconds) || seconds < 0) seconds = 0
+    message.grantSeconds = Math.min(seconds, SSH_AGENT_APPROVAL_WINDOW_MAX_SEC)
+  }
+  return JSON.stringify(message) + "\n"
 }
 
 function sshAgentDenyLine(requestId) {
@@ -4648,15 +4652,15 @@ var SSH_AGENT_FORWARDED_WARNING =
 
 // One approval_required message, reduced to what the prompt draws. Everything
 // attacker-influenced is bounded here rather than at the point it is rendered.
-function sshAgentPromptView(message, approvalWindowSec) {
+function sshAgentPromptView(message, approvalWindowSec, untilScreenLock) {
   var request = message || {}
   var window = Math.max(0, Math.min(SSH_AGENT_APPROVAL_WINDOW_MAX_SEC,
     Math.floor(Number(approvalWindowSec)) || 0))
   var forwarded = request.forwarded === true
-  // A grant is a window in which this process signs without asking again, so
-  // it is offered only when the companion offered one, the user has a
-  // non-zero window configured, and nothing about the request is unusual.
-  var grantOffered = request.grantOffered === true && window > 0 && !forwarded
+  var untilLock = untilScreenLock === true
+  // Offer grants only when the companion offered one, a window or until-lock
+  // is configured, and the request is not forwarded.
+  var grantOffered = request.grantOffered === true && (untilLock || window > 0) && !forwarded
   return {
     requestId: isRequestId(request.requestId) ? request.requestId : -1,
     keyId: boundedText(request.keyId, SSH_AGENT_MAX_NAME_CHARS),
@@ -4667,12 +4671,13 @@ function sshAgentPromptView(message, approvalWindowSec) {
     processName: processNameFromPath(boundedText(request.processPath, SSH_AGENT_MAX_PATH_CHARS)),
     operation: request.operation === "ssh-sign" ? "ssh-sign" : "",
     grantOffered: grantOffered,
-    grantSeconds: grantOffered ? window : 0,
+    grantSeconds: grantOffered && !untilLock ? window : 0,
+    grantUntilScreenLock: grantOffered && untilLock,
     // "program", not "process": a grant matches the executable path and the
     // key, so a fresh process running the same program rides it. That is what
     // makes it useful for Git signing, which spawns one ssh-keygen per commit.
     // See docs/decisions/0002-grant-scope.md.
-    grantLabel: grantOffered ? "Approve for this program · " + formatDuration(window) : "",
+    grantLabel: grantOffered && !untilLock ? "Approve for this program · " + formatDuration(window) : "",
     forwardedWarning: forwarded ? SSH_AGENT_FORWARDED_WARNING : "",
     provenanceNote: SSH_AGENT_PROVENANCE_NOTE
   }
@@ -4722,8 +4727,9 @@ function sshAgentGrantViews(grants, nowMs) {
   for (var i = 0; i < grants.length; i++) {
     var grant = grants[i] || {}
     if (!isRequestId(grant.grantId)) continue
+    var untilLock = grant.untilScreenLock === true
     var remaining = Math.max(0, Math.floor(Number(grant.expiresInSec)) || 0)
-    out.push({
+    var view = {
       grantId: grant.grantId,
       keyName: boundedText(grant.keyName, SSH_AGENT_MAX_NAME_CHARS),
       fingerprint: boundedText(grant.fingerprint, SSH_AGENT_MAX_NAME_CHARS),
@@ -4733,10 +4739,14 @@ function sshAgentGrantViews(grants, nowMs) {
       // When it runs out, not how long it had left when it was announced.
       // The label below is a snapshot of one instant; this is what lets a
       // later instant be worked out without another announcement.
-      expiresAtMs: now + remaining * 1000,
-      remainingSec: remaining,
-      remainingLabel: remaining > 0 ? formatDuration(remaining) + " left" : "expiring"
-    })
+      expiresAtMs: untilLock ? null : now + remaining * 1000,
+      untilScreenLock: untilLock
+    }
+    if (!untilLock) {
+      view.remainingSec = remaining
+      view.remainingLabel = remaining > 0 ? formatDuration(remaining) + " left" : "expiring"
+    }
+    out.push(view)
   }
   return out
 }
@@ -4772,6 +4782,7 @@ function sshAgentGrantsAt(views, nowMs) {
       processPath: view.processPath,
       processName: view.processName,
       expiresAtMs: view.expiresAtMs,
+      untilScreenLock: view.untilScreenLock,
       remainingSec: remaining,
       remainingLabel: formatDuration(remaining) + " left"
     })
@@ -5357,6 +5368,8 @@ var SETTINGS_SCHEMA = [
     description: "Let an SSH client open the unlock prompt when the vault is locked. Off by default because every ssh connection asks for identities, including ones with nothing to do with your vault." },
   { key: "sshAgentApprovalPopup", group: "sshAgent", type: "bool", label: "Use centered approval popup", defaultValue: true,
     description: "Show SSH unlock and signing requests in a transient card in the middle of the screen instead of opening the anchored panel. Disable to show them in the panel." },
+  { key: "sshAgentApprovalUntilScreenLock", group: "sshAgent", type: "bool", label: "Approve until the screen locks", defaultValue: false,
+    description: "Replace the time window with a grant that ends on screen lock, vault lock, logout or revoke. Screen lock always revokes grants. Suspend revokes them through vault lock only if locking on suspend is enabled." },
   { key: "sshAgentApprovalWindowSec", group: "sshAgent", type: "int", label: "Approve for this long", unit: "seconds",
     min: 0, max: SSH_AGENT_APPROVAL_WINDOW_MAX_SEC, step: 30, zeroLabel: "Always ask", defaultValue: 120,
     description: "How long one approval covers further signatures from the same process. Grants live only in the helper's memory and never survive a restart." },

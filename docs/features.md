@@ -32,6 +32,7 @@ Every feature the plugin has, and why each one works the way it does. The
 - **SSH Agent** (opt-in, `sshAgentEnabled`):
   - Serves the SSH keys in your vault to `ssh`, `git` and `ssh-keygen -Y sign` while the vault is unlocked, from a separate helper process that holds the private keys in memory and drops them on lock, logout, or exit. They are never written to disk and never reach QML.
   - Every signature shows the key, its fingerprint and the program asking. The default prompt lives in the panel; the opt-in centered popup makes the plugin otherwise disappear until a decision is needed. One approval can cover a whole rebase; live approvals are listed and revocable, and repeated unanswered prompts fall back to a cooldown rather than pestering.
+  - **Approve until the screen locks** (`sshAgentApprovalUntilScreenLock`, off by default) replaces the timed program approval with no time expiry. It keeps the same user, executable, key and vault-epoch scope. Screen lock always revokes grants, regardless of **Lock when the screen locks**. Suspend drops them through the vault lock when **Lock when the machine suspends** is on, as before. Grants also end on vault lock, logout, revoke or helper exit. The next signature after unlocking asks again.
   - Public keys are projected to files for Git signing, one file per item, public material only. See [SSH Agent](ssh-agent.md).
 
 - **Context-Aware Password Suggestions (Active Window / Browser Tab)**:

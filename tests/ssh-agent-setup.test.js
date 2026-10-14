@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 // The SSH agent is opt-in, and "opted in" is not the same as "usable". These
-// tests cover the four settings, the explicit disabled/enabled/error setup
+// tests cover the SSH settings, the explicit disabled/enabled/error setup
 // state, the managed UWSM fragment lifecycle, and the advisory SSH_AUTH_SOCK
 // diagnostics -- which must never decide whether the companion runs.
 //
@@ -48,13 +48,14 @@ const manifestEntry = key => manifestSchema.find(e => e.key === key)
 const modelEntry = key => Model.settingSchemaEntry(key)
 
 // -------------------------------------------------------------------------
-// The four settings, consistent across manifest, model schema and defaults
+// The SSH settings, consistent across manifest, model schema and defaults
 // -------------------------------------------------------------------------
 
 const expected = [
   { key: "sshAgentEnabled", type: "bool", manifestType: "boolean", defaultValue: false },
   { key: "sshAgentUnlockOnDemand", type: "bool", manifestType: "boolean", defaultValue: false },
   { key: "sshAgentApprovalPopup", type: "bool", manifestType: "boolean", defaultValue: true },
+  { key: "sshAgentApprovalUntilScreenLock", type: "bool", manifestType: "boolean", defaultValue: false },
   { key: "sshAgentApprovalWindowSec", type: "int", manifestType: "integer", defaultValue: 120 }
 ]
 
@@ -66,6 +67,7 @@ for (const want of expected) {
   if (!m || !s) continue
   eq(`${want.key} manifest type`, m.type, want.manifestType)
   eq(`${want.key} model type`, s.type, want.type)
+  eq(`${want.key} belongs to the SSH settings group`, s.group, "sshAgent")
   eq(`${want.key} manifest default`, m.defaultValue, want.defaultValue)
   eq(`${want.key} model default`, s.defaultValue, want.defaultValue)
   eq(`${want.key} defaults block`, manifestDefaults[want.key], want.defaultValue)
@@ -116,7 +118,7 @@ check("there is an SSH Agent settings group", !!sshGroup, JSON.stringify(Model.S
 const grouped = Model.groupedSettings()
 eq("grouping still covers every schema entry", grouped.length, Model.SETTINGS_SCHEMA.length)
 const sshRows = grouped.filter(e => e.group === "sshAgent")
-eq("the SSH Agent group holds exactly the four settings", sshRows.length, 4)
+eq("the SSH Agent group holds every SSH setting", sshRows.length, expected.length)
 eq("the group header is drawn once", sshRows.filter(e => e.groupLabel).length, 1)
 eq("the enabled toggle leads the group", sshRows[0].key, "sshAgentEnabled")
 check("grouping did not mutate the schema",
@@ -149,7 +151,7 @@ for (const [label, deps, checked] of [
   const settings = rows.filter(e => e.kind === "setting")
   const headers = rows.filter(e => e.kind === "group")
   eq(`${label} hides the SSH settings`, rows.filter(e => e.group === "sshAgent").length, 0)
-  eq(`${label} keeps every other setting`, settings.length, Model.SETTINGS_SCHEMA.length - 4)
+  eq(`${label} keeps every other setting`, settings.length, Model.SETTINGS_SCHEMA.length - expected.length)
   check(`${label} still draws every remaining group header`,
     headers.length === new Set(settings.map(e => e.group)).size,
     JSON.stringify(headers.map(e => e.label)))

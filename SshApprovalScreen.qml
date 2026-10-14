@@ -198,12 +198,16 @@ Column {
 
   Button {
     visible: panel.sshPrompt && panel.sshPrompt.grantOffered
-    text: panel.sshPrompt ? panel.sshPrompt.grantLabel : ""
+    text: panel.sshPrompt ? (panel.sshPrompt.grantUntilScreenLock
+      ? Tr.text("Approve for this program · until screen lock") : panel.sshPrompt.grantLabel) : ""
     iconText: "󰔟"
-    tooltipText: Tr.text("Sign further requests from this same program with this key, without asking again, until the window expires")
+    tooltipText: panel.sshPrompt && panel.sshPrompt.grantUntilScreenLock
+      ? Tr.text("Sign further requests from this same program with this key, without asking again, until the screen locks")
+      : Tr.text("Sign further requests from this same program with this key, without asking again, until the window expires")
     fontFamily: panel.fontFamily
     fontSize: Style.font.bodySmall
     focusable: true
-    onClicked: panel.approveSshRequest(panel.sshPrompt ? panel.sshPrompt.grantSeconds : 0)
+    onClicked: panel.approveSshRequest(panel.sshPrompt ? panel.sshPrompt.grantSeconds : 0,
+      panel.sshPrompt ? panel.sshPrompt.grantUntilScreenLock : false)
   }
 }

@@ -281,7 +281,7 @@ for (const [label, contents] of [
   check("a failing bw fails the whole read", run.result.status !== 0, `status ${run.result.status}`)
   check("a failing bw produces no item list", run.result.stdout.trim() === "", run.result.stdout.slice(0, 200))
   eq("a failed read is framed as a failed load", Model.sshAgentLoadEndLine(7, false),
-    JSON.stringify({ v: 1, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
+    JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
   const panelSrc = fs.readFileSync(path.join(repoRoot, "Panel.qml"), "utf8")
   check("the panel closes every load window with the read's real outcome",
     /endSshAgentLoad\(exitCode === 0\)/.test(panelSrc), "the exit handler does not close the load window")
@@ -329,16 +329,16 @@ check("the fan-out pipeline runs under process-group supervision",
 // Control lines that frame a load
 // -------------------------------------------------------------------------
 
-eq("key_load_begin is a versioned v1 line", Model.sshAgentLoadBeginLine(7, LOAD_ID),
-  JSON.stringify({ v: 1, type: "key_load_begin", epoch: 7, loadId: LOAD_ID }) + "\n")
+eq("key_load_begin is a versioned v2 line", Model.sshAgentLoadBeginLine(7, LOAD_ID),
+  JSON.stringify({ v: 2, type: "key_load_begin", epoch: 7, loadId: LOAD_ID }) + "\n")
 eq("key_load_end reports success", Model.sshAgentLoadEndLine(7, true),
-  JSON.stringify({ v: 1, type: "key_load_end", epoch: 7, status: "ok" }) + "\n")
+  JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "ok" }) + "\n")
 eq("key_load_end reports failure", Model.sshAgentLoadEndLine(7, false),
-  JSON.stringify({ v: 1, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
-eq("vault_locked is a versioned v1 line", Model.sshAgentVaultLockedLine(7),
-  JSON.stringify({ v: 1, type: "vault_locked", epoch: 7 }) + "\n")
-eq("vault_logged_out is a versioned v1 line", Model.sshAgentLoggedOutLine(),
-  JSON.stringify({ v: 1, type: "vault_logged_out" }) + "\n")
+  JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
+eq("vault_locked is a versioned v2 line", Model.sshAgentVaultLockedLine(7),
+  JSON.stringify({ v: 2, type: "vault_locked", epoch: 7 }) + "\n")
+eq("vault_logged_out is a versioned v2 line", Model.sshAgentLoggedOutLine(),
+  JSON.stringify({ v: 2, type: "vault_logged_out" }) + "\n")
 eq("an invalid nonce yields no begin line", Model.sshAgentLoadBeginLine(7, "nope"), "")
 
 // No control line may ever carry key material or a session token.

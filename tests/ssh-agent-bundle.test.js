@@ -18,6 +18,11 @@ function inspect(dir) {
  assert.equal(run.status,0,run.stderr);
  return Model.parse(run.stdout);
 }
+test('stale helper protocols are reported before launch',()=> {
+ const result=Model.parse('state=ok\nsource=development\nprotocol=1\nselfTest=pass\n');
+ assert.equal(result.state,'protocol-mismatch');
+ assert.ok(result.message.length>0);
+});
 test('only local Cargo output is eligible, never a bundled source',()=> {
  assert.deepEqual(Model.candidates('/opt/bw'),[{source:'development',path:'/opt/bw/agent/target/debug/qs-bitwarden-ssh-agent'}]);
  assert.deepEqual(Model.candidates('/opt/../bw'),[]);
