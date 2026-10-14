@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.11.6-dms.2] - 2026-10-14
+
+- Port upstream `fe35484`: keep vault-derived SSH key names out of process arguments during public-key export, pruning and logout cleanup.
+- Validate the complete export payload before writing; preserve atomic replacement, restrictive permissions and symlink protection.
+- Restore the DMS main branch after an upstream-only reset; retain the DMS runtime and plugin manifest.
+
 ## [1.11.6-dms.1] - 2026-10-14
 
 - Port the security runtime and follow-up fixes through upstream `418f5d3` (1.11.6).
