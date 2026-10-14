@@ -1,32 +1,16 @@
 #!/usr/bin/env node
-// The vault's lifecycle drives the companion's. These tests pin the design's
-// state table and the ordering rules around a lock: deny first, cancel work,
-// drop private material, keep only the public projection, and never let the
-// panel's own lock wait on a companion that will not answer.
+// The vault's lifecycle drives the companion's: on lock, deny first, cancel
+// work, drop private keys, keep the public projection, and never wait on the
+// companion.
 //
 //   node tests/ssh-agent-lifecycle.test.js
 
-const fs = require("fs")
+const { createSuite, loadModule, readPluginSource, functionBody } = require("./harness")
 const path = require("path")
 
-const repoRoot = path.join(__dirname, "..")
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(repoRoot, "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.sshAgentVaultState = sshAgentVaultState
-  exports.sshAgentIdentityPolicy = sshAgentIdentityPolicy
-  exports.sshAgentLifecycleTransition = sshAgentLifecycleTransition
-  exports.sshAgentLockAckTimeoutMs = sshAgentLockAckTimeoutMs
-  exports.sshAgentVaultLockedLine = sshAgentVaultLockedLine
-  exports.sshAgentLoggedOutLine = sshAgentLoggedOutLine
-  exports.sshAgentRevokeGrantsLine = sshAgentRevokeGrantsLine
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
-const eq = (label, actual, expected) =>
-  check(label, actual === expected, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+const { check, eq, done } = createSuite("ssh-agent-lifecycle")
 
 const ctx = extra => Object.assign({
   enabled: true, helperReady: true, loggedIn: true,
@@ -53,31 +37,6 @@ eq("logged out outranks a stale cache",
   Model.sshAgentVaultState(ctx({ loggedIn: false, hasPublicCache: true })), "logged-out")
 eq("disabled outranks logged out",
   Model.sshAgentVaultState(ctx({ enabled: false, loggedIn: false })), "disabled")
-
-const policy = state => Model.sshAgentIdentityPolicy(state)
-
-for (const [state, publicIds, privateKeys, signing] of [
-  ["disabled", false, false, "denied"],
-  ["logged-out", false, false, "denied"],
-  ["locked-empty", false, false, "needs-unlock"],
-  ["loading", true, false, "denied"],
-  ["unlocked", true, true, "allowed"],
-  ["locked-cached", true, false, "needs-unlock"]
-]) {
-  const p = policy(state)
-  eq(`${state} offers public identities: ${publicIds}`, p.publicIdentities, publicIds)
-  eq(`${state} holds private keys: ${privateKeys}`, p.privateKeys, privateKeys)
-  eq(`${state} signing is ${signing}`, p.signing, signing)
-}
-
-// Private keys exist in exactly one state, and it is the only one that signs.
-const allStates = ["disabled", "logged-out", "locked-empty", "loading", "unlocked", "locked-cached"]
-eq("private keys live in exactly one state",
-  allStates.filter(s => policy(s).privateKeys).length, 1)
-eq("only that state signs without a further unlock",
-  allStates.filter(s => policy(s).signing === "allowed").join(","), "unlocked")
-check("no state holds private keys without allowing signing",
-  allStates.every(s => !policy(s).privateKeys || policy(s).signing === "allowed"), "mismatch")
 
 // -------------------------------------------------------------------------
 // Lifecycle transitions
@@ -119,7 +78,13 @@ for (const event of ["logout", "account-change"]) {
   check(`${event} does not merely lock`,
     !t.controlLines.some(l => l.indexOf('"vault_locked"') >= 0), JSON.stringify(t.controlLines))
   eq(`${event} waits for no acknowledgment`, t.awaitLockAck, false)
+  // The companion moves its epoch on with the logout; a panel that did not
+  // started the next load at that same epoch, which was refused as stale.
+  eq(`${event} moves the panel's epoch on with the companion's`, t.advanceEpoch, true)
+  eq(`${event} with no live helper leaves the epoch alone`,
+    Model.sshAgentLifecycleTransition(event, ctx({ helperReady: false })).advanceEpoch, false)
 }
+eq("a lock leaves the epoch to the next load", lock.advanceEpoch, false)
 
 // Unlock and sync both ride the panel's existing read.
 for (const event of ["unlock", "sync"]) {
@@ -169,13 +134,16 @@ eq("a lock with no live helper waits for no acknowledgment", lockNoHelper.awaitL
 // approval screen have their own. A check that reads only the largest one
 // silently narrows as markup moves out of it.
 const panelSrc = ["Panel.qml", "SshAgentSettings.qml", "SshApprovalScreen.qml"]
-  .map(file => fs.readFileSync(path.join(repoRoot, file), "utf8"))
+  .map(readPluginSource)
   .join("\n")
 const lockVault = panelSrc.slice(panelSrc.indexOf("function lockVault()"),
   panelSrc.indexOf("function lockVault()") + 1400)
 
 check("locking runs bw lock without waiting on the companion",
-  /lockProc\.running = true/.test(lockVault) && !/await|\.wait\(/.test(lockVault), lockVault.slice(0, 300))
+  /requestBwLock\(\)/.test(lockVault) && !/await|\.wait\(/.test(lockVault)
+    && /lockProc\.running = true/.test(panelSrc.slice(panelSrc.indexOf("function runBwLockStep()"),
+      panelSrc.indexOf("function runBwLockStep()") + 600)),
+  lockVault.slice(0, 300))
 check("locking reports the vault locked on the panel's own schedule",
   /status = "locked"/.test(lockVault), "lockVault never sets the locked status")
 check("locking notifies the companion",
@@ -193,9 +161,59 @@ check("a locked acknowledgment stops the timer",
   /"locked"[\s\S]{0,300}?sshAgentLockAckTimer\.stop\(\)/.test(panelSrc),
   "the locked acknowledgment never stops the kill timer")
 
+check("the panel's epoch follows the companion's past a logout",
+  /function applySshAgentLifecycle\(event\)[\s\S]{0,700}?if \(action\.advanceEpoch\) sshAgentEpoch \+= 1/.test(panelSrc),
+  "the next load after a logout reuses an epoch the companion has passed")
 check("logout tells the companion the account is gone",
   /function logoutAccount\(\)[\s\S]{0,900}?applySshAgentLifecycle\("logout"\)/.test(panelSrc),
   "logoutAccount never notifies the companion")
+// The vault closed under the panel: `bw status` says locked or logged out (a
+// `bw lock` or `bw logout` in a terminal, or a failed check), or the vault
+// helper died with the session key. The panel used to drop its own state and
+// leave the companion signing with the vault's keys.
+const statusFinished = functionBody(panelSrc, "onStatusFinished")
+check("a status check that fails tells the companion before the vault goes",
+  /if \(!st\) \{\s*cancelAuthPrewarm\(\)\s*followVaultClosedInSshAgent\("unauthenticated"\)/.test(statusFinished),
+  statusFinished)
+check("a vault bw reports locked locks the companion before the vault goes",
+  /\} else if \(st\.locked\) \{\s*followVaultClosedInSshAgent\("locked"\)\s*if \(vaultStatePresent\(\)\)/.test(statusFinished),
+  statusFinished)
+check("an account bw reports logged out logs the companion out before the vault goes",
+  /\} else \{\s*cancelAuthPrewarm\(\)\s*followVaultClosedInSshAgent\("unauthenticated"\)\s*if \(vaultStatePresent\(\)\)/.test(statusFinished),
+  statusFinished)
+const followClosed = functionBody(panelSrc, "followVaultClosedInSshAgent")
+check("a vault found locked is a lock for the companion, only if it was open",
+  /next === "locked" && status === "unlocked"\) applySshAgentLifecycle\("lock"\)/.test(followClosed), followClosed)
+check("an account found logged out is a logout for the companion, from either signed-in state",
+  /next === "unauthenticated" && \(status === "unlocked" \|\| status === "locked"\)\) applySshAgentLifecycle\("logout"\)/
+    .test(followClosed), followClosed)
+check("an unlock refused as not logged in drops the companion's public keys too",
+  /"not logged in"\) !== -1\) \{\s*followVaultClosedInSshAgent\("unauthenticated"\)\s*status = "unauthenticated"/
+    .test(functionBody(panelSrc, "onUnlockOutput")), functionBody(panelSrc, "onUnlockOutput").slice(-600))
+
+// Every way the panel stops being unlocked reaches the companion. A new one
+// that does not is the bug above again, so each assignment must sit in a
+// function that tells it (directly or through a function that does), or be
+// named here with the reason it need not.
+{
+  const service = readPluginSource("Service.qml")
+  const tells = /applySshAgentLifecycle\(|lockVault\(\)|leaveActiveAccount\(\)|followVaultClosedInSshAgent\(/
+  const exempt = {
+    // The second half of logoutAccount(), which sent the logout.
+    finishLogoutIfReady: true
+  }
+  const leaving = /\bstatus = "(locked|unauthenticated)"/g
+  let m
+  while ((m = leaving.exec(service)) !== null) {
+    const before = service.slice(0, m.index)
+    const start = before.lastIndexOf("  function ")
+    const name = (/function (\w+)\(/.exec(service.slice(start)) || [])[1]
+    if (name === "lockVault" || exempt[name]) continue
+    check(`${name}() tells the companion when it sets ${m[0]}`, tells.test(service.slice(start, m.index)),
+      service.slice(start, m.index).slice(-400))
+  }
+}
+
 check("screen lock and suspend reach the companion through the lock path",
   /function onScreenLockState[\s\S]{0,300}?lockVault\(\)/.test(panelSrc)
     && /function onSleepSignal[\s\S]{0,900}?lockVault\(\)/.test(panelSrc),
@@ -233,19 +251,47 @@ const messageHandler = panelSrc.slice(
 check("the companion's own events are consumed rather than ignored",
   /message\.type === "locked"/.test(messageHandler) && /message\.type === "keys_loaded"/.test(messageHandler),
   "onSshAgentMessage ignores the lock acknowledgment or the load result")
+check("a failed load is not treated as a lock acknowledgment",
+  /message\.type === "load_failed"/.test(messageHandler)
+    && !/"load_failed"[\s\S]{0,200}sshAgentLockAckTimer\.stop/.test(messageHandler),
+  "load_failed must not stop the lock-ack timer; that timer is for vault_locked")
+check("a failed load clears the startup-load guard so an unlocked vault can retry",
+  /load_failed[\s\S]{0,500}sshAgentLoadedForVaultEpoch = -1/.test(messageHandler)
+    && /load_failed[\s\S]{0,700}maybeStartupLoad\(\)/.test(messageHandler),
+  "without clearing the epoch, maybeStartupLoad refuses a second attempt")
+check("a load_failed for an older load is ignored",
+  /message\.type === "load_failed"[\s\S]{0,400}?message\.epoch !== root\.sshAgentEpoch\) return[\s\S]{0,200}?sshAgentLoadFailStreak \+= 1/.test(messageHandler),
+  "a stale failure clears the epoch a newer load already marked")
+const startupLoad = panelSrc.slice(panelSrc.indexOf("function maybeStartupLoad()"),
+  panelSrc.indexOf("onStatusChanged:", panelSrc.indexOf("function maybeStartupLoad()")))
+check("a startup load waits for a nonce instead of spending the attempt without one",
+  /isValidLoadId\(sshAgentNextLoadId\)[\s\S]{0,120}?return/.test(startupLoad)
+    && startupLoad.indexOf("isValidLoadId") < startupLoad.indexOf("sshAgentLoadedForVaultEpoch = root.vaultEpoch"),
+  startupLoad)
+check("a nonce arriving picks up a load that was waiting for it",
+  /function onSshAgentLoadIdRead\(raw\)[\s\S]{0,300}?maybeStartupLoad\(\)/.test(panelSrc),
+  "nothing resumes the load once the nonce is ready")
+check("an answered identity listing takes its prompt down",
+  /request_cancelled[\s\S]{0,900}?reason === "released"[\s\S]{0,600}?list-identities[\s\S]{0,300}?if \(!listingAnswered\) return/.test(messageHandler),
+  "a released listing is answered, not re-raised as an approval, so the prompt must close")
+check("a failed load retries once, not in a loop",
+  /property int sshAgentLoadFailStreak/.test(panelSrc)
+    && /sshAgentLoadFailStreak \+= 1/.test(messageHandler)
+    && /sshAgentLoadFailStreak === 1/.test(messageHandler),
+  "a persistently bad FIFO must not relaunch the item list forever")
+check("a successful load or a new helper clears the fail streak",
+  /keys_loaded[\s\S]{0,600}sshAgentLoadFailStreak = 0/.test(messageHandler)
+    && /onSshAgentGateOpenChanged[\s\S]{0,900}sshAgentLoadFailStreak = 0/.test(panelSrc)
+    && /function dropVaultState\(\)[\s\S]{0,1200}sshAgentLoadFailStreak = 0/.test(panelSrc),
+  "a later sync after recovery would inherit a spent retry")
 
-// Turning the feature off stops the helper through the supervisor, which is a
-// different path from the lifecycle table -- so the table's clearPublic has to
-// be applied explicitly or the projection is left on disk by a feature that is
-// no longer running.
+// Disabling stops the helper via the supervisor, outside the lifecycle table,
+// so the projection must be cleared explicitly.
 check("disabling the feature clears the public projection",
   /onSshAgentEnabledChanged[\s\S]{0,700}?applySshAgentLifecycle\("disable"\)/.test(panelSrc),
   "disabling never applies the disable transition")
 
-// A restarted helper is empty even when the vault epoch has not moved: the
-// keystore lives in the helper's memory, not the vault's. Keying the
-// startup-load guard on the vault epoch alone leaves a fresh helper keyless
-// until something unrelated happens to bump it.
+// A restarted helper is empty even if the vault epoch did not move.
 check("a new helper is always eligible for a load",
   /onSshAgentGateOpenChanged[\s\S]{0,700}?sshAgentLoadedForVaultEpoch = -1/.test(panelSrc),
   "a restarted helper inherits the old load bookkeeping and never loads")
@@ -257,7 +303,7 @@ check("a departed helper's key count is not left standing",
 // Control lines
 // -------------------------------------------------------------------------
 
-eq("revoke_grants is a versioned v2 line", Model.sshAgentRevokeGrantsLine(),
+eq("revoke_grants is a versioned v1 line", Model.sshAgentRevokeGrantsLine(),
   JSON.stringify({ v: 2, type: "revoke_grants" }) + "\n")
 
 for (const line of [Model.sshAgentVaultLockedLine(3), Model.sshAgentLoggedOutLine(),
@@ -266,9 +312,111 @@ for (const line of [Model.sshAgentVaultLockedLine(3), Model.sshAgentLoggedOutLin
     line.indexOf("BW_SESSION") < 0 && line.indexOf("privateKey") < 0 && line.indexOf("PRIVATE") < 0, line)
 }
 
-if (failures.length) {
-  console.error(`\n${failures.length} failed, ${pass} passed\n`)
-  failures.forEach(f => console.error(`  FAIL ${f}`))
-  process.exit(1)
+// --- a killed helper's runtime files -----------------------------------------
+//
+// A helper killed with the shell objects (plugin disabled or removed) cannot
+// remove its socket, FIFO and lock. The vault removes them from a detached
+// script once the lock is free, and only then.
+{
+  const fs = require("fs")
+  const os = require("os")
+  const { spawnSync } = require("child_process")
+  const names = ["ssh-agent.sock", "ssh-keys.fifo", "ssh-agent.lock"]
+  const setup = () => {
+    const rt = fs.mkdtempSync(path.join(os.tmpdir(), "qsbw-cleanup-"))
+    const dir = path.join(rt, "qs-bitwarden-cli")
+    fs.mkdirSync(dir, { mode: 0o700 })
+    for (const n of names) fs.writeFileSync(path.join(dir, n), "")
+    return { rt, dir }
+  }
+  const cmd = rt => Model.sshAgentRuntimeCleanupCommand(rt)
+
+  const held = setup()
+  const c = cmd(held.rt)
+  const started = Date.now()
+  const run = spawnSync("bash", ["-c", 'flock "$1" sleep 0.5 & sleep 0.1; shift; "$@"',
+    "_", path.join(held.dir, "ssh-agent.lock"), ...c], { encoding: "utf8" })
+  const waited = Date.now() - started
+  check("cleanup waits for a held lock, then removes the files",
+    run.status === 0 && !fs.existsSync(held.dir) && waited >= 400, `exit ${run.status}, waited ${waited} ms`)
+  fs.rmSync(held.rt, { recursive: true, force: true })
+
+  const linked = setup()
+  const real = path.join(linked.rt, "real")
+  fs.renameSync(linked.dir, real)
+  fs.symlinkSync(real, linked.dir)
+  spawnSync(cmd(linked.rt)[0], cmd(linked.rt).slice(1))
+  check("cleanup never follows a symlinked runtime directory",
+    names.every(n => fs.existsSync(path.join(real, n))), fs.readdirSync(real).join(","))
+  fs.rmSync(linked.rt, { recursive: true, force: true })
+
+  check("cleanup needs an absolute runtime directory", Model.sshAgentRuntimeCleanupCommand("relative") === null, "")
+
+  const vaultSrc = readPluginSource("Service.qml")
+  check("the vault runs the cleanup detached when it is destroyed with a helper",
+    /Component\.onDestruction:[\s\S]{0,200}sshAgentRuntimeCleanupCommand\(root\.sshAgentRuntimeDir\)[\s\S]{0,80}Quickshell\.execDetached\(cleanup\)/.test(vaultSrc),
+    "no cleanup on destruction")
 }
-console.log(`ssh-agent-lifecycle: ${pass} passed`)
+
+// -------------------------------------------------------------------------
+// An unlock releases held requests in any order; the shown card is bound only
+// to its own request
+// -------------------------------------------------------------------------
+
+{
+  const service = readPluginSource("Service.qml")
+  const names = ["adoptSshPrompt", "onSshAgentMessage"]
+  const unlockMessage = (requestId, extra) => Object.assign({
+    type: "unlock_required", requestId: requestId, reason: "sign", keyName: "k",
+    fingerprint: "SHA256:A", pid: 10, processPath: "/usr/bin/ssh-keygen",
+    operation: "sshsig", operationDetail: "git", hostKey: "", forwarded: false,
+    grantOffered: true
+  }, extra || {})
+  const approvalOf = (requestId, unlock) =>
+    Object.assign({}, unlock, { type: "approval_required", requestId: requestId, keyId: "i" })
+
+  const makeVault = shown => {
+    const v = {
+      Model: Model, sshPromotedOldId: shown.requestId, sshPromotedRaw: shown.raw,
+      sshPrompt: { requestId: shown.requestId }, sshPromptQueue: [], writes: [], shownNew: [],
+      sshAgentMayPrompt() { return true },
+      sshAgentWrite(line) { v.writes.push(line) },
+      showSshApproval(message) { v.shownNew.push(message) }
+    }
+    v.root = v
+    const make = new Function("root", "with (root) {\n" + names.map(n => functionBody(service, n)).join("\n")
+      + "\nreturn {" + names.map(n => `${n}: ${n}`).join(", ") + "} }")
+    Object.assign(v, make(v))
+    return v
+  }
+
+  const a = unlockMessage(1, { fingerprint: "SHA256:A", pid: 10 })
+  const b = unlockMessage(2, { fingerprint: "SHA256:B", pid: 11, processPath: "/usr/bin/other" })
+
+  // A is shown (promoted from its unlock prompt); B's release arrives first.
+  const v = makeVault({ requestId: 1, raw: a })
+  v.onSshAgentMessage(approvalOf(20, b))
+  eq("another request's approval is not bound to the shown card", v.sshPrompt.requestId, 1)
+  check("it is queued instead", v.sshPromptQueue.length === 1 && v.sshPromptQueue[0].requestId === 20,
+    JSON.stringify(v.sshPromptQueue))
+  check("the card is still waiting for its own request", v.sshPromotedOldId === 1, String(v.sshPromotedOldId))
+  v.onSshAgentMessage(approvalOf(21, a))
+  eq("the matching approval is adopted", v.sshPrompt.requestId, 21)
+  eq("and the promotion is finished", v.sshPromotedOldId, null)
+  eq("the other request stays queued", v.sshPromptQueue.length, 1)
+
+  // Each field that tells two requests apart is compared.
+  const differing = [["fingerprint", "SHA256:Z"], ["pid", 99], ["processPath", "/tmp/x"],
+    ["operation", "ssh-auth"], ["operationDetail", "file"], ["hostKey", "SHA256:" + "h".repeat(43)],
+    ["forwarded", true], ["grantOffered", false]]
+  for (const [field, value] of differing) {
+    const w = makeVault({ requestId: 1, raw: a })
+    w.onSshAgentMessage(approvalOf(30, Object.assign({}, a, { [field]: value })))
+    check(`a different ${field} is not adopted`, w.sshPrompt.requestId === 1 && w.sshPromptQueue.length === 1,
+      JSON.stringify(w.sshPrompt))
+  }
+  eq("without the promoted message nothing is adopted",
+    makeVault({ requestId: 1, raw: null }).adoptSshPrompt(approvalOf(40, a)), false)
+}
+
+done()

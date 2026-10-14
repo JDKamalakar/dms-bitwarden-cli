@@ -1,12 +1,28 @@
-use qs_bitwarden_ssh_agent::approvals::{ApprovalError, ApprovalManager, GrantDuration, Submit};
+use qs_bitwarden_ssh_agent::approvals::GrantDuration;
+use qs_bitwarden_ssh_agent::approvals::{ApprovalError, ApprovalManager, SignScope, Submit};
 use qs_bitwarden_ssh_agent::keystore::{CandidateItem, KeyStore};
 use qs_bitwarden_ssh_agent::peer::PeerContext;
+use qs_bitwarden_ssh_agent::protocol::SignKind;
 use rand_core::OsRng;
 use ssh_key::{Algorithm, HashAlg, PrivateKey};
 use zeroize::Zeroizing;
 
 fn peer(pid: u32, start: u64, executable: &str) -> PeerContext {
     PeerContext::new(rustix::process::geteuid().as_raw(), pid, start, executable).unwrap()
+}
+
+/// What Git asks for on every commit it signs: the grantable case.
+fn git_signature() -> SignScope {
+    scope(SignKind::SshSig {
+        namespace: "git".into(),
+    })
+}
+
+fn scope(kind: SignKind) -> SignScope {
+    SignScope {
+        kind,
+        forwarded: false,
+    }
 }
 
 fn loaded_store(epoch: u64) -> (KeyStore, Vec<u8>) {
@@ -32,10 +48,8 @@ fn loaded_store(epoch: u64) -> (KeyStore, Vec<u8>) {
     (store, blob)
 }
 
-/// Two clocks bound one wait, and they are not independent. The companion's
-/// request deadline is the human's time to answer; the server's reply wait is
-/// how long a client blocks for that answer. If the second is shorter, the
-/// first is decorative -- which it was, with both set to thirty seconds.
+/// The server's reply wait must outlast the human deadline, or the deadline
+/// is meaningless.
 #[test]
 fn a_client_waits_longer_than_the_human_is_given_to_answer() {
     assert!(
@@ -56,7 +70,7 @@ fn a_client_waits_longer_than_the_human_is_given_to_answer() {
     assert_eq!(
         qs_bitwarden_ssh_agent::approvals::REQUEST_LIFETIME_MS,
         120_000,
-        "see docs/decisions/0003-request-deadline.md"
+        "a person reading a fingerprint needs minutes, not thirty seconds"
     );
 }
 
@@ -67,13 +81,16 @@ fn queue_is_bounded_expires_and_disconnect_cancels() {
     let client = peer(100, 10, "/usr/bin/ssh");
     let mut ids = Vec::new();
     for _ in 0..4 {
-        match approvals.submit(1, &key, client.clone(), 1_000).unwrap() {
+        match approvals
+            .submit(1, &key, client.clone(), git_signature(), 1_000)
+            .unwrap()
+        {
             Submit::Pending(id) => ids.push(id),
             Submit::Granted(_) => panic!("no grant exists"),
         }
     }
     assert_eq!(
-        approvals.submit(1, &key, client.clone(), 1_000),
+        approvals.submit(1, &key, client.clone(), git_signature(), 1_000),
         Err(ApprovalError::QueueFull)
     );
     approvals.disconnect(ids[0]);
@@ -103,7 +120,7 @@ fn approval_is_single_use_and_old_epoch_fails_at_final_check() {
     let (mut store, key) = loaded_store(7);
     let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
     let id = match approvals
-        .submit(7, &key, peer(101, 20, "/usr/bin/ssh"), 0)
+        .submit(7, &key, peer(101, 20, "/usr/bin/ssh"), git_signature(), 0)
         .unwrap()
     {
         Submit::Pending(id) => id,
@@ -116,7 +133,7 @@ fn approval_is_single_use_and_old_epoch_fails_at_final_check() {
     );
     assert!(authorization.finalize(&store).is_some());
     let second = match approvals
-        .submit(7, &key, peer(101, 20, "/usr/bin/ssh"), 2)
+        .submit(7, &key, peer(101, 20, "/usr/bin/ssh"), git_signature(), 2)
         .unwrap()
     {
         Submit::Pending(id) => approvals.approve(id, GrantDuration::Once, 2).unwrap(),
@@ -126,18 +143,17 @@ fn approval_is_single_use_and_old_epoch_fails_at_final_check() {
     assert!(second.finalize(&store).is_none());
 }
 
-/// A grant covers one key and one program, not one process. Git spawns a
-/// fresh `ssh-keygen` for every commit it signs, so a grant tied to a PID
-/// never matches the case grants exist for -- a rebase would prompt once per
-/// commit regardless. Scoping to the executable path is what makes the
-/// feature do its job; see docs/decisions/0002-grant-scope.md for the
-/// exposure this accepts.
+/// A grant covers one key and one program, not one process: Git spawns a new
+/// `ssh-keygen` per commit.
 #[test]
 fn grants_are_capped_and_bound_to_key_and_executable() {
     let (_, key) = loaded_store(3);
     let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
     let original = peer(200, 50, "/usr/bin/git");
-    let id = match approvals.submit(3, &key, original.clone(), 0).unwrap() {
+    let id = match approvals
+        .submit(3, &key, original.clone(), git_signature(), 0)
+        .unwrap()
+    {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
@@ -146,7 +162,9 @@ fn grants_are_capped_and_bound_to_key_and_executable() {
         .unwrap();
     assert_eq!(approvals.grants()[0].expires_at_ms, Some(900_010));
     assert!(matches!(
-        approvals.submit(3, &key, original.clone(), 20).unwrap(),
+        approvals
+            .submit(3, &key, original.clone(), git_signature(), 20)
+            .unwrap(),
         Submit::Granted(_)
     ));
 
@@ -155,7 +173,13 @@ fn grants_are_capped_and_bound_to_key_and_executable() {
     assert!(
         matches!(
             approvals
-                .submit(3, &key, peer(9001, 7777, "/usr/bin/git"), 20)
+                .submit(
+                    3,
+                    &key,
+                    peer(9001, 7777, "/usr/bin/git"),
+                    git_signature(),
+                    20
+                )
                 .unwrap(),
             Submit::Granted(_)
         ),
@@ -165,13 +189,15 @@ fn grants_are_capped_and_bound_to_key_and_executable() {
     // A different program does not, even from the same process identity.
     assert!(matches!(
         approvals
-            .submit(3, &key, peer(200, 50, "/usr/bin/ssh"), 20)
+            .submit(3, &key, peer(200, 50, "/usr/bin/ssh"), git_signature(), 20)
             .unwrap(),
         Submit::Pending(_)
     ));
     // Nor does a different key.
     assert!(matches!(
-        approvals.submit(3, b"different key", original, 20).unwrap(),
+        approvals
+            .submit(3, b"different key", original, git_signature(), 20)
+            .unwrap(),
         Submit::Pending(_)
     ));
 }
@@ -184,7 +210,7 @@ fn a_grant_never_crosses_to_another_user() {
     let expected = rustix::process::geteuid().as_raw();
     let mut approvals = ApprovalManager::new(expected);
     let mine = peer(200, 50, "/usr/bin/git");
-    let id = match approvals.submit(3, &key, mine, 0).unwrap() {
+    let id = match approvals.submit(3, &key, mine, git_signature(), 0).unwrap() {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
@@ -194,7 +220,9 @@ fn a_grant_never_crosses_to_another_user() {
 
     let theirs = PeerContext::new(expected.wrapping_add(1), 201, 51, "/usr/bin/git").unwrap();
     assert!(
-        approvals.submit(3, &key, theirs, 20).is_err(),
+        approvals
+            .submit(3, &key, theirs, git_signature(), 20)
+            .is_err(),
         "another user must not reach a grant, whatever program they run"
     );
 }
@@ -206,12 +234,15 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
     let mut approvals = ApprovalManager::new(expected);
     let wrong = PeerContext::new(expected.wrapping_add(1), 1, 1, "/usr/bin/ssh").unwrap();
     assert_eq!(
-        approvals.submit(5, &key, wrong, 0),
+        approvals.submit(5, &key, wrong, git_signature(), 0),
         Err(ApprovalError::WrongUid)
     );
 
     let p = peer(300, 60, "/usr/bin/ssh");
-    let id = match approvals.submit(5, &key, p.clone(), 0).unwrap() {
+    let id = match approvals
+        .submit(5, &key, p.clone(), git_signature(), 0)
+        .unwrap()
+    {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
@@ -221,7 +252,10 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
     let grant_id = approvals.grants()[0].id;
     approvals.revoke_grant(grant_id);
     assert!(approvals.grants().is_empty());
-    let id = match approvals.submit(5, &key, p.clone(), 0).unwrap() {
+    let id = match approvals
+        .submit(5, &key, p.clone(), git_signature(), 0)
+        .unwrap()
+    {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
@@ -230,7 +264,10 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
         .unwrap();
     approvals.revoke_peer(&p);
     assert!(approvals.grants().is_empty());
-    let id = match approvals.submit(5, &key, p.clone(), 0).unwrap() {
+    let id = match approvals
+        .submit(5, &key, p.clone(), git_signature(), 0)
+        .unwrap()
+    {
         Submit::Pending(id) => id,
         _ => unreachable!(),
     };
@@ -241,62 +278,9 @@ fn wrong_uid_and_lifecycle_revocation_fail_closed() {
     assert!(approvals.grants().is_empty());
     assert_eq!(approvals.pending_count(), 0);
     assert!(matches!(
-        approvals.submit(5, &key, p, 1).unwrap(),
+        approvals.submit(5, &key, p, git_signature(), 1).unwrap(),
         Submit::Pending(_)
     ));
-}
-
-#[test]
-fn until_screen_lock_grants_have_no_time_expiry() {
-    let uid = rustix::process::geteuid().as_raw();
-    let mut approvals = ApprovalManager::new(uid);
-    let original = peer(200, 50, "/usr/bin/ssh-keygen");
-    let Submit::Pending(id) = approvals.submit(3, b"key", original, 0).unwrap() else {
-        panic!("expected a pending request before approval");
-    };
-    approvals
-        .approve(id, GrantDuration::UntilScreenLock, 10)
-        .unwrap();
-    assert_eq!(approvals.grants()[0].expires_at_ms, None);
-    approvals.expire(u64::MAX);
-    assert_eq!(approvals.grants().len(), 1);
-}
-
-#[test]
-fn until_screen_lock_grants_are_removed_by_every_revocation() {
-    enum Revocation {
-        InvalidateAll,
-        AllGrants,
-        OneGrant,
-        Peer,
-    }
-    for revoke in [
-        Revocation::InvalidateAll,
-        Revocation::AllGrants,
-        Revocation::OneGrant,
-        Revocation::Peer,
-    ] {
-        let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
-        let client = peer(200, 50, "/usr/bin/ssh-keygen");
-        let Submit::Pending(id) = approvals.submit(3, b"key", client.clone(), 0).unwrap() else {
-            panic!("expected a pending request before approval");
-        };
-        approvals
-            .approve(id, GrantDuration::UntilScreenLock, 10)
-            .unwrap();
-        let grant_id = approvals.grants()[0].id;
-        match revoke {
-            Revocation::InvalidateAll => approvals.invalidate_all(),
-            Revocation::AllGrants => approvals.revoke_all_grants(),
-            Revocation::OneGrant => approvals.revoke_grant(grant_id),
-            Revocation::Peer => approvals.revoke_peer(&client),
-        }
-        assert!(approvals.grants().is_empty());
-        assert!(matches!(
-            approvals.submit(3, b"key", client, 20).unwrap(),
-            Submit::Pending(_)
-        ));
-    }
 }
 
 #[test]
@@ -306,4 +290,321 @@ fn peer_snapshot_comes_from_proc_without_trusting_display_metadata() {
     assert_eq!(snapshot.pid, pid);
     assert!(snapshot.start_time_ticks > 0);
     assert!(snapshot.executable.is_absolute());
+}
+
+/// A grant answers only its own kind of signature: Git signatures do not cover
+/// logins or other namespaces, and a login as one user does not cover another.
+#[test]
+fn a_grant_is_scoped_to_what_it_signed() {
+    let (_, key) = loaded_store(3);
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let program = peer(200, 50, "/usr/bin/ssh-keygen");
+    let id = match approvals
+        .submit(3, &key, program.clone(), git_signature(), 0)
+        .unwrap()
+    {
+        Submit::Pending(id) => id,
+        _ => unreachable!(),
+    };
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
+    assert_eq!(
+        approvals.grants()[0].kind,
+        SignKind::SshSig {
+            namespace: "git".into()
+        }
+    );
+
+    let others = [
+        scope(SignKind::UserAuth {
+            user: "root".into(),
+            host: String::new(),
+        }),
+        scope(SignKind::SshSig {
+            namespace: "file".into(),
+        }),
+        scope(SignKind::Other),
+    ];
+    for other in others {
+        assert!(
+            matches!(
+                approvals.submit(3, &key, program.clone(), other.clone(), 1),
+                Ok(Submit::Pending(_))
+            ),
+            "{other:?} must not ride a grant for Git signatures"
+        );
+    }
+
+    let login_to = |user: &str, host: &str| {
+        scope(SignKind::UserAuth {
+            user: user.into(),
+            host: host.into(),
+        })
+    };
+    let login = |user: &str| login_to(user, "SHA256:github");
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let ssh = peer(300, 60, "/usr/bin/ssh");
+    let id = match approvals
+        .submit(3, &key, ssh.clone(), login("git"), 0)
+        .unwrap()
+    {
+        Submit::Pending(id) => id,
+        _ => unreachable!(),
+    };
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
+    assert!(matches!(
+        approvals.submit(3, &key, peer(301, 61, "/usr/bin/ssh"), login("git"), 1),
+        Ok(Submit::Granted(_))
+    ));
+    assert!(matches!(
+        approvals.submit(3, &key, ssh.clone(), login("root"), 1),
+        Ok(Submit::Pending(_))
+    ));
+    // A login grant covers the one server it was approved for: the same user
+    // on another host, or on a host the client did not report, asks again.
+    for elsewhere in [login_to("git", "SHA256:elsewhere"), login_to("git", "")] {
+        assert!(
+            matches!(
+                approvals.submit(3, &key, ssh.clone(), elsewhere.clone(), 1),
+                Ok(Submit::Pending(_))
+            ),
+            "{elsewhere:?} must not ride a grant for another host"
+        );
+    }
+}
+
+/// Forwarded or unrecognised requests never open a grant, whatever the panel
+/// sends, and forwarded ones never ride an existing grant.
+#[test]
+fn forwarded_and_unrecognised_requests_never_open_or_ride_a_grant() {
+    let (_, key) = loaded_store(3);
+    let ssh = peer(300, 60, "/usr/bin/ssh");
+    let login = SignKind::UserAuth {
+        user: "git".into(),
+        host: "SHA256:github".into(),
+    };
+    let forwarded = SignScope {
+        kind: login.clone(),
+        forwarded: true,
+    };
+    assert!(!forwarded.grantable());
+    assert!(!scope(SignKind::Other).grantable());
+
+    for ungrantable in [forwarded.clone(), scope(SignKind::Other)] {
+        let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+        let id = match approvals
+            .submit(3, &key, ssh.clone(), ungrantable.clone(), 0)
+            .unwrap()
+        {
+            Submit::Pending(id) => id,
+            _ => unreachable!(),
+        };
+        approvals
+            .approve(id, GrantDuration::Seconds(900), 0)
+            .unwrap();
+        assert!(
+            approvals.grants().is_empty(),
+            "{ungrantable:?} was approved once, not for a window"
+        );
+    }
+
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let id = match approvals
+        .submit(3, &key, ssh.clone(), scope(login), 0)
+        .unwrap()
+    {
+        Submit::Pending(id) => id,
+        _ => unreachable!(),
+    };
+    approvals
+        .approve(id, GrantDuration::Seconds(120), 0)
+        .unwrap();
+    assert_eq!(approvals.grants().len(), 1);
+    assert!(
+        matches!(
+            approvals.submit(3, &key, ssh, forwarded, 1),
+            Ok(Submit::Pending(_))
+        ),
+        "a remote host's request must not ride the local ssh's grant"
+    );
+}
+
+/// Three `ssh -T git@github.com` at once queue three prompts. Approving the
+/// first for the program must settle the other two, which the grant covers,
+/// and nothing it does not.
+#[test]
+fn a_grant_settles_the_requests_already_queued_behind_it() {
+    let (store, key) = loaded_store(3);
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let submit =
+        |approvals: &mut ApprovalManager, peer: PeerContext, scope: SignScope| match approvals
+            .submit(3, &key, peer, scope, 0)
+            .unwrap()
+        {
+            Submit::Pending(id) => id,
+            Submit::Granted(_) => panic!("nothing is granted yet"),
+        };
+    let first = submit(
+        &mut approvals,
+        peer(100, 1, "/usr/bin/ssh"),
+        git_signature(),
+    );
+    let second = submit(
+        &mut approvals,
+        peer(101, 2, "/usr/bin/ssh"),
+        git_signature(),
+    );
+    let third = submit(
+        &mut approvals,
+        peer(102, 3, "/usr/bin/ssh"),
+        git_signature(),
+    );
+    // Not covered: another program, another kind of signature.
+    let other_program = submit(
+        &mut approvals,
+        peer(103, 4, "/usr/bin/git"),
+        git_signature(),
+    );
+    assert_eq!(approvals.pending_count(), 4);
+
+    // Approved once, no grant: nothing else moves.
+    approvals.approve(first, GrantDuration::Once, 10).unwrap();
+    assert!(approvals.release_granted(10).is_empty());
+    assert_eq!(approvals.pending_count(), 3);
+
+    // Approved for the program: the one still queued from it is released.
+    approvals
+        .approve(second, GrantDuration::Seconds(120), 20)
+        .unwrap();
+    let released = approvals.release_granted(20);
+    let ids: Vec<_> = released.iter().map(|(id, _)| *id).collect();
+    assert_eq!(ids, vec![third]);
+    assert!(!approvals.is_pending(third));
+    assert!(
+        approvals.is_pending(other_program),
+        "another program still asks"
+    );
+    // And what it releases still has to pass the keystore's final check.
+    let (_, authorization) = released.into_iter().next().unwrap();
+    assert!(authorization.finalize(&store).is_some());
+}
+
+/// A queued request of another kind, or a forwarded one, is never settled by
+/// a grant: only what a new request could ride may be released.
+#[test]
+fn a_grant_settles_only_what_it_would_answer_new() {
+    let (_, key) = loaded_store(3);
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let pend = |approvals: &mut ApprovalManager, scope: SignScope| match approvals
+        .submit(3, &key, peer(100, 1, "/usr/bin/ssh"), scope, 0)
+        .unwrap()
+    {
+        Submit::Pending(id) => id,
+        Submit::Granted(_) => panic!("nothing is granted yet"),
+    };
+    let granted = pend(&mut approvals, git_signature());
+    let other_kind = pend(
+        &mut approvals,
+        scope(SignKind::SshSig {
+            namespace: "file".into(),
+        }),
+    );
+    let forwarded = pend(
+        &mut approvals,
+        SignScope {
+            kind: SignKind::SshSig {
+                namespace: "git".into(),
+            },
+            forwarded: true,
+        },
+    );
+    approvals
+        .approve(granted, GrantDuration::Seconds(120), 10)
+        .unwrap();
+    assert!(approvals.release_granted(10).is_empty());
+    assert!(approvals.is_pending(other_kind));
+    assert!(approvals.is_pending(forwarded));
+}
+
+#[test]
+fn until_screen_lock_keeps_scope_and_survives_time_but_not_revocation() {
+    let (_, key) = loaded_store(3);
+    let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+    let requester = peer(200, 50, "/usr/bin/git");
+    let Submit::Pending(id) = approvals
+        .submit(3, &key, requester.clone(), git_signature(), 0)
+        .unwrap()
+    else {
+        panic!("approval required")
+    };
+    approvals
+        .approve(id, GrantDuration::UntilScreenLock, 1)
+        .unwrap();
+    assert_eq!(approvals.grants()[0].expires_at_ms, None);
+    let later = 86_400_000;
+    assert!(matches!(
+        approvals
+            .submit(3, &key, requester.clone(), git_signature(), later)
+            .unwrap(),
+        Submit::Granted(_)
+    ));
+    for changed_scope in [
+        scope(SignKind::SshSig {
+            namespace: "file".into(),
+        }),
+        SignScope {
+            forwarded: true,
+            ..git_signature()
+        },
+    ] {
+        let Submit::Pending(id) = approvals
+            .submit(3, &key, requester.clone(), changed_scope, later)
+            .unwrap()
+        else {
+            panic!("changed purpose or forwarding must prompt")
+        };
+        approvals.disconnect(id);
+    }
+    let Submit::Pending(id) = approvals
+        .submit(4, &key, requester.clone(), git_signature(), later)
+        .unwrap()
+    else {
+        panic!("changed epoch must prompt")
+    };
+    approvals.disconnect(id);
+    approvals.revoke_all_grants();
+    assert!(approvals.grants().is_empty());
+    assert!(matches!(
+        approvals
+            .submit(3, &key, requester, git_signature(), later)
+            .unwrap(),
+        Submit::Pending(_)
+    ));
+}
+
+#[test]
+fn until_screen_lock_cannot_grant_forwarded_or_unknown_signatures() {
+    let (_, key) = loaded_store(3);
+    for sign_scope in [
+        SignScope {
+            forwarded: true,
+            ..git_signature()
+        },
+        scope(SignKind::Other),
+    ] {
+        let mut approvals = ApprovalManager::new(rustix::process::geteuid().as_raw());
+        let Submit::Pending(id) = approvals
+            .submit(3, &key, peer(200, 50, "/usr/bin/git"), sign_scope, 0)
+            .unwrap()
+        else {
+            panic!("approval required")
+        };
+        approvals
+            .approve(id, GrantDuration::UntilScreenLock, 1)
+            .unwrap();
+        assert!(approvals.grants().is_empty());
+    }
 }

@@ -2,46 +2,24 @@ import QtQuick
 import "DmsUi"
 import "BitwardenModel.js" as Model
 
-// The SSH agent's own settings sections, lifted out of Panel.qml so that file
-// is not the only place this feature can be read.
-//
-// Two separate things, deliberately drawn apart. The top half is what the
-// feature is doing; the bottom half is whether the user's terminals will
-// reach it. Neither one gates the other. The approval screen lives with the
-// other screens in Panel.qml, because that is what it is.
-//
-// `panel` is the Panel root: this section reads its vault and agent state and
-// calls back into it for every action. Nothing here holds state of its own.
+// The SSH agent settings sections: what the agent is doing, then whether the
+// user's terminals reach it (routing). Neither gates the other. Stateless;
+// reads the vault and calls back into it.
 Column {
   id: section
 
   required property var panel
+  // The vault this panel shows (Service.qml); `panel` is the view that draws it.
+  required property var vault
 
-  // The bar's foreground and font family, not the global theme's -- the same
-  // values the rest of the panel draws with. PanelSectionHeader and Text both
-  // default to the globals, so every text element here states them.
-  component SshSectionHeader: PanelSectionHeader {
-    textFormat: Text.PlainText
-    foreground: section.panel.fg
-    fontFamily: section.panel.fontFamily
-  }
-
-  component SshCaption: Text {
-    textFormat: Text.PlainText
-    width: parent ? parent.width : 0
-    color: section.panel.dim
-    font.family: section.panel.fontFamily
-    font.pixelSize: Style.font.caption
-    wrapMode: Text.WordWrap
-  }
-
-  visible: panel.sshUiAvailable
+  visible: vault.sshUiAvailable
   width: parent.width
   spacing: Style.space(6)
 
   Item { width: parent.width; height: Style.space(10) }
 
   SshSectionHeader {
+    panel: section.panel
     text: Tr.text("SSH AGENT STATUS")
   }
 
@@ -52,78 +30,76 @@ Column {
     Text {
       textFormat: Text.PlainText
       anchors.verticalCenter: parent.verticalCenter
-      text: panel.sshAgentSetup.state === "enabled"
-        ? (panel.sshAgentSetup.busy ? "󰔟" : "󰄬")
-        : (panel.sshAgentSetup.state === "error" ? "󰀪" : "󰅘")
-      color: panel.sshAgentSetup.state === "error"
+      text: vault.sshAgentSetup.state === "enabled"
+        ? (vault.sshAgentSetup.busy ? "󰔟" : "󰄬")
+        : (vault.sshAgentSetup.state === "error" ? "󰀪" : "󰅘")
+      color: vault.sshAgentSetup.state === "error"
         ? panel.urgent
-        : (panel.sshAgentSetup.state === "enabled" && !panel.sshAgentSetup.busy ? DmsColor.accent : panel.dim)
+        : (vault.sshAgentSetup.state === "enabled" && !vault.sshAgentSetup.busy ? DmsColor.accent : panel.dim)
       font.family: panel.fontFamily
       font.pixelSize: Style.font.body
     }
 
     SshCaption {
+      panel: section.panel
       width: parent.width - Style.space(30)
-      text: panel.sshAgentSetup.message
-      color: panel.sshAgentSetup.state === "error" ? panel.urgent : panel.dim
+      text: vault.sshAgentSetup.message
+      color: vault.sshAgentSetup.state === "error" ? panel.urgent : panel.dim
     }
   }
 
-  // Which helper is running. A developer with a local build and a
-  // user on a release see the same panel otherwise, and confusing
-  // the two wastes an afternoon.
+  // Which helper is running (shipped or local build).
   SshCaption {
-    visible: panel.sshAgentHelper.source !== ""
-    text: Tr.text("Using ") + Model.sshAgentHelperSourceLabel(panel.sshAgentHelper.source)
-      + (panel.sshAgentHelper.checksum === "match" ? Tr.text(" (checksum verified)") : "")
-    color: panel.sshAgentHelper.source === "development" ? panel.urgent : panel.dim
+    panel: section.panel
+    visible: vault.sshAgentHelper.source !== ""
+    text: Tr.text("Using ") + Model.sshAgentHelperSourceLabel(vault.sshAgentHelper.source)
+      + (vault.sshAgentHelper.checksum === "match" ? Tr.text(" (checksum verified)") : "")
+    color: vault.sshAgentHelper.source === "development" ? panel.urgent : panel.dim
   }
 
-  // Why the feature is unavailable, when it is. These are the
-  // failures a real clone produces: a stale binary, a dropped file
-  // mode, an LFS placeholder.
+  // Why the feature is unavailable, if it is.
   SshCaption {
-    visible: panel.sshAgentEnabled && panel.sshAgentHelper.message !== ""
-    text: panel.sshAgentHelper.message
+    panel: section.panel
+    visible: vault.sshAgentEnabled && vault.sshAgentHelper.message !== ""
+    text: vault.sshAgentHelper.message
     color: panel.urgent
   }
 
-  // The helper's own version, once it has said hello. Non-secret,
-  // and the quickest way to tell a stale bundled binary apart from
-  // a working one.
+  // The helper's version, once it said hello.
   SshCaption {
-    visible: panel.sshAgentVersion !== ""
-    text: Tr.text("Helper version ") + panel.sshAgentVersion
+    panel: section.panel
+    visible: vault.sshAgentVersion !== ""
+    text: Tr.text("Helper version ") + vault.sshAgentVersion
   }
 
-  // Routing is the thing most likely to be missing when the agent looks
-  // healthy and SSH still does not use it. Said here because this is the
-  // block a user reads first, and decided by the routing file rather than by
-  // this session's SSH_AUTH_SOCK -- see sshAgentRoutingNotice for why.
+  // The most likely reason a healthy agent goes unused. Judged by the routing
+  // file; see sshAgentRoutingNotice().
   SshCaption {
-    visible: panel.sshAgentSetup.state === "enabled" && !panel.sshAgentSetup.busy
-      && panel.sshRoutingNotice.text !== ""
-    text: panel.sshRoutingNotice.text
-    color: panel.sshRoutingNotice.urgent ? panel.urgent : panel.dim
+    panel: section.panel
+    visible: vault.sshAgentSetup.state === "enabled" && !vault.sshAgentSetup.busy
+      && vault.sshRoutingNotice.text !== ""
+    text: vault.sshRoutingNotice.text
+    color: vault.sshRoutingNotice.urgent ? panel.urgent : panel.dim
   }
 
   Item { width: parent.width; height: Style.space(10) }
 
   SshSectionHeader {
+    panel: section.panel
     text: Tr.text("CLIENT ROUTING")
   }
 
   SshCaption {
-    text: panel.sshRouting.message
-    color: panel.sshRouting.state === "matches" ? panel.dim : panel.fg
+    panel: section.panel
+    text: vault.sshRouting.message
+    color: vault.sshRouting.state === "matches" ? panel.dim : panel.fg
   }
 
-  // The check the user runs in the terminal they actually use --
-  // which is the only place the answer is authoritative.
+  // Only the user's own terminal gives the authoritative answer.
   Text {
     textFormat: Text.PlainText
     width: parent.width
-    text: "  " + panel.sshRouting.terminalCheck
+    text: "  " + vault.sshRouting.terminalCheck
     color: DmsColor.accent
     font.family: panel.fontFamily
     font.pixelSize: Style.font.caption
@@ -131,91 +107,89 @@ Column {
   }
 
   SshCaption {
-    text: panel.uwsmFragment.message
+    panel: section.panel
+    text: vault.uwsmFragment.message
   }
 
-  // Replacing the session's primary agent is a real decision, so the
-  // conflict is stated and confirmed rather than absorbed by the
-  // first click.
+  // Replacing the session's agent is confirmed, not done on the first click.
   SshCaption {
-    visible: panel.uwsmConfirmPending
+    panel: section.panel
+    visible: vault.uwsmConfirmPending
     text: Tr.text("This will make Bitwarden your session's SSH agent at the next login, replacing ")
-      + (panel.sshRouting.owner !== "" ? panel.sshRouting.owner : Tr.text("the one you have now"))
+      + (vault.sshRouting.owner !== "" ? vault.sshRouting.owner : Tr.text("the one you have now"))
       + Tr.text(". Continue?")
     color: panel.urgent
   }
 
   SshCaption {
-    visible: panel.uwsmFlash !== ""
-    text: panel.uwsmFlash
+    panel: section.panel
+    visible: vault.uwsmFlash !== ""
+    text: vault.uwsmFlash
     color: panel.fg
   }
 
-  // A Flow, because which of these four are showing is decided by the routing
-  // state: the idle pair and the confirming pair are each narrow enough, but
-  // nothing in a Row enforces that, and a Row answers a set that is too wide by
-  // laying the last button out past the panel edge rather than wrapping it.
+  // A Flow, so whichever buttons the routing state shows wrap instead of
+  // overflowing the vault.
   Flow {
     width: parent.width
     spacing: Style.space(8)
 
     Button {
-      visible: !panel.uwsmConfirmPending && panel.uwsmFragment.state !== "managed"
+      visible: !vault.uwsmConfirmPending && vault.uwsmFragment.state !== "managed"
       text: Tr.text("Route SSH Clients Here")
       iconText: "󰌘"
       tooltipText: Tr.text("Write ") + Model.uwsmFragmentDisplayPath() + Tr.text(" so the next login points SSH clients at this agent")
       fontFamily: panel.fontFamily
       fontSize: Style.font.bodySmall
-      enabled: !panel.uwsmBusy
-      onClicked: panel.beginUwsmSetup()
+      enabled: !vault.uwsmBusy
+      onClicked: vault.beginUwsmSetup()
     }
 
     Button {
-      visible: panel.uwsmConfirmPending
+      visible: vault.uwsmConfirmPending
       text: Tr.text("Yes, Replace It")
       iconText: "󰄬"
       fontFamily: panel.fontFamily
       fontSize: Style.font.bodySmall
-      enabled: !panel.uwsmBusy
-      onClicked: panel.beginUwsmSetup()
+      enabled: !vault.uwsmBusy
+      onClicked: vault.beginUwsmSetup()
     }
 
     Button {
-      visible: panel.uwsmConfirmPending
+      visible: vault.uwsmConfirmPending
       text: Tr.text("Cancel")
       iconText: "󰅘"
       fontFamily: panel.fontFamily
       fontSize: Style.font.bodySmall
-      onClicked: panel.cancelUwsmSetup()
+      onClicked: vault.cancelUwsmSetup()
     }
 
     Button {
-      visible: !panel.uwsmConfirmPending && panel.uwsmFragment.removable
+      visible: !vault.uwsmConfirmPending && vault.uwsmFragment.removable
       text: Tr.text("Remove Routing File")
       iconText: "󰩹"
       tooltipText: Tr.text("Delete ") + Model.uwsmFragmentDisplayPath()
       fontFamily: panel.fontFamily
       fontSize: Style.font.bodySmall
-      enabled: !panel.uwsmBusy
-      onClicked: panel.removeUwsmFragment()
+      enabled: !vault.uwsmBusy
+      onClicked: vault.removeUwsmFragment()
     }
   }
   Item {
-    visible: panel.sshGrants.length > 0
+    visible: vault.sshGrants.length > 0
     width: parent.width
     height: visible ? Style.space(10) : 0
   }
 
   SshSectionHeader {
-    visible: panel.sshGrants.length > 0
+    panel: section.panel
+    visible: vault.sshGrants.length > 0
     text: Tr.text("ACTIVE APPROVALS")
   }
 
-  // Every live grant, with the process it belongs to and what is
-  // left of it. A grant is a window in which signing happens with
-  // no prompt, so it has to be visible and revocable while it runs.
+  // Live grants sign without prompting, so each is listed and revocable.
   Repeater {
-    model: panel.sshGrants
+    model: vault.sshGrants
 
     delegate: Row {
       required property var modelData
@@ -223,9 +197,12 @@ Column {
       spacing: Style.space(8)
 
       SshCaption {
+        panel: section.panel
         width: parent.width - Style.space(110)
         text: modelData.keyName + "  ·  "
           + modelData.processName
+          + (modelData.operationLabel ? "  ·  " + modelData.operationLabel : "")
+          + (modelData.hostKey ? "  ·  " + modelData.hostKey : "")
           + "  ·  " + (modelData.untilScreenLock ? Tr.text("until screen lock") : modelData.remainingLabel)
       }
 
@@ -235,18 +212,18 @@ Column {
         iconText: "󰩹"
         fontFamily: panel.fontFamily
         fontSize: Style.font.caption
-        onClicked: panel.revokeSshGrant(modelData.grantId)
+        onClicked: vault.revokeSshGrant(modelData.grantId)
       }
     }
   }
 
   Button {
-    visible: panel.sshGrants.length > 1
+    visible: vault.sshGrants.length > 1
     text: Tr.text("Revoke All Approvals")
     iconText: "󰩹"
     tooltipText: Tr.text("Drop every live approval; the next signature asks again")
     fontFamily: panel.fontFamily
     fontSize: Style.font.bodySmall
-    onClicked: panel.revokeAllSshGrants()
+    onClicked: vault.revokeAllSshGrants()
   }
 }

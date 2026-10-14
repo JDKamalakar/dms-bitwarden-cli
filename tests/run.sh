@@ -10,6 +10,9 @@ if [[ -z "$qml_runner" ]]; then
   echo "Qt 6 qmltestrunner is required" >&2
   exit 1
 fi
-cargo build --manifest-path agent/Cargo.toml --locked
+./scripts/build-helpers.sh
+for crate in agent vault unlock-key; do
+  cargo test --manifest-path "$crate/Cargo.toml" --locked
+done
 node --test tests/*.test.js
 QML_XHR_ALLOW_FILE_READ=1 QT_QPA_PLATFORM=offscreen "$qml_runner" -input tests/qml -o -,txt

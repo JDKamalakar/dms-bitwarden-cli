@@ -1,19 +1,10 @@
-// Escape must cancel out of a form, and the panel's key wiring makes that
-// non-obvious enough to be worth pinning down. Two separate traps live here.
+// Escape must cancel out of a form. Two traps:
 //
-// 1. PanelKeyCatcher goes `blocked` on every screen built around a text field
-//    -- the item form, PIN, fingerprint, the Send composer -- and a blocked
-//    catcher drops ALL keys, Escape included. So Escape is dispatched from the
-//    shortcut interceptor, which the catcher reaches through Keys.forwardTo
-//    before its own handler and regardless of `blocked`.
-//
-// 2. Qt does NOT clear active focus when an item is hidden. The search field
-//    keeps focus behind the item form, and its own Keys.onEscapePressed used
-//    to fire from back there and close the whole panel. Two things stop that:
-//    the handler ignores Escape unless the search box is the current screen,
-//    and focus is re-homed whenever the screen changes.
-//
-// Needs Qt, which any machine running the plugin already has:
+// 1. PanelKeyCatcher is `blocked` on text-entry screens and then drops every
+//    key, so Escape is dispatched by the shortcut interceptor, which it
+//    reaches via Keys.forwardTo regardless of `blocked`.
+// 2. Qt keeps focus on hidden items, so the search field's Escape handler only
+//    acts while the list is showing, and focus is re-homed on screen changes.
 //
 //   QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/qml
 //
@@ -22,7 +13,7 @@ import QtQuick.Controls
 import QtTest
 // Namespaced so the kit's own TextField (which needs the shell's import path)
 // does not shadow the plain QtQuick.Controls one used below.
-import "../../DmsUi/Keys" as DmsUi
+import "../../DmsUi/Keys" as OmarchyUi
 
 TestCase {
   id: tc
@@ -63,7 +54,7 @@ TestCase {
     }
   }
 
-  DmsUi.PanelKeyCatcher {
+  OmarchyUi.PanelKeyCatcher {
     id: catcher
     anchors.fill: parent
     Keys.forwardTo: [interceptor]

@@ -11,14 +11,14 @@ Item {
     property bool toggled: false
     width: 600; height: 200
     Ui.Button { id: button; width: 100; height: 40; text: "Demo"; onClicked: checks.clicks++ }
-    Ui.TextField {
+    LineField {
         id: field; y: 45; width: 240; password: true
         onAccepted: checks.accepted++
         Keys.onDownPressed: checks.downs++
         Keys.onEscapePressed: checks.escapes++
     }
     Ui.ToggleSwitch { id: toggle; x: 280; y: 45; checked: checks.toggled; onToggled: checks.toggled = !checks.toggled }
-    Ui.NumberField { id: number; y: 110; value: 2; from: 1; to: 5; onModified: function(value) { number.value = value } }
+    NumberEntry { id: number; y: 110; value: 2; from: 1; to: 5; onModified: function(value) { number.value = value } }
     TestCase {
         id: driver
         when: windowShown
@@ -41,7 +41,8 @@ Item {
             require(checks.escapes === 1, "escape routing")
             mouseClick(toggle, toggle.width/2, toggle.height/2)
             require(checks.toggled, "native toggle click")
-            number.commit("100")
+            number.field.contentItem.text = "100"
+            number.commit()
             require(number.value === 5, "number clamp")
             console.log("DMS_CONTROLS_PASS")
         }

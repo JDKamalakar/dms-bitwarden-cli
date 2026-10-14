@@ -330,7 +330,7 @@
     "Close panel on copy": "Nach dem Kopieren schließen",
     "Return focus to your app as soon as Enter copies a credential.": "Nach dem Kopieren mit Enter zu deiner Anwendung zurückkehren.",
     "Colorize menu-bar icon": "Leistensymbol einfärben",
-    "Use the active DMS theme accent for the primary menu-bar icon.": "Akzentfarbe des aktiven DMS-Themes für das Leistensymbol verwenden.",
+    "Use the active DMS theme accent for the primary menu-bar icon.": "Die Akzentfarbe des aktiven DMS-Themes für das Symbol in der Leiste verwenden.",
     "Auto-copy TOTP after": "TOTP automatisch kopieren nach",
     "Replace the clipboard with the 2FA code this long after the password.": "Nach dieser Zeit das kopierte Passwort durch den 2FA-Code ersetzen.",
     "Suggest for active window": "Vorschläge zum aktiven Fenster",
@@ -527,6 +527,18 @@
     "Hide %1": "%1 verbergen",
     "Reveal %1": "%1 anzeigen",
     "Copy %1": "%1 kopieren",
-    "A %1-digit PIN is only %2 combinations. If the encrypted blob ever leaks, that is minutes of offline guessing. Use %3 or more.": "Eine PIN mit %1 Ziffern hat nur %2 Kombinationen. Gelangen die verschlüsselten Daten in falsche Hände, lässt sich die PIN offline in wenigen Minuten erraten. Verwende mindestens %3 Ziffern."
+    "A %1-digit PIN is only %2 combinations. If the encrypted blob ever leaks, that is minutes of offline guessing. Use %3 or more.": "Eine PIN mit %1 Ziffern hat nur %2 Kombinationen. Gelangen die verschlüsselten Daten in falsche Hände, lässt sich die PIN offline in wenigen Minuten erraten. Verwende mindestens %3 Ziffern.",
+    "A verified fingerprint opens your master password, stored once, encrypted and sealed to this machine.": "Ein bestätigter Fingerabdruck öffnet dein verschlüsselt gespeichertes und an diesen Rechner gebundenes Master-Passwort.",
+    "Unlock with FIDO2 key": "Mit FIDO2-Schlüssel entsperren",
+    "A FIDO2 key touch opens your master password, stored once, encrypted and sealed to this machine. Requires an existing pam-u2f registration in /etc/fido2/fido2 and libfido2 tools.": "Eine Berührung des FIDO2-Schlüssels öffnet dein verschlüsselt gespeichertes und an diesen Rechner gebundenes Master-Passwort. Benötigt eine bestehende pam-u2f-Registrierung in /etc/fido2/fido2 und die libfido2-Werkzeuge.",
+    "A PIN of 6 digits or more opens your master password, stored once, encrypted and sealed to this machine. A program running as you can copy it and try every 6-digit PIN in about 16 hours, so use 8 or more (about 2 months).": "Eine PIN ab 6 Ziffern öffnet dein verschlüsselt gespeichertes, an diesen Rechner gebundenes Master-Passwort. Ein Programm mit deinen Benutzerrechten kann die Daten kopieren und alle sechsstelligen PINs in etwa 16 Stunden testen. Verwende mindestens 8 Ziffern (etwa 2 Monate).",
+    "Type secrets in pinentry": "Geheimnisse in pinentry eingeben",
+    "Type your master password and PIN into pinentry, a separate window, instead of the panel, so they never enter the shell. Needs pinentry installed and the vault helper running; while the helper is not running, the panel waits for it instead of offering its own field.": "Master-Passwort und PIN in einem separaten pinentry-Fenster eingeben, damit sie nicht in die Shell gelangen. Benötigt pinentry und den laufenden Vault-Helfer. Solange der Helfer fehlt, wartet das Panel und bietet kein eigenes Eingabefeld an.",
+    "Approve until screen lock": "Bis zur Bildschirmsperre erlauben",
+    "Saved in the DMS plugin settings.": "In den DMS-Plugin-Einstellungen gespeichert.",
+    "Approve matching requests from this program until the screen locks": "Passende Anfragen dieses Programms bis zur Bildschirmsperre erlauben",
+    "Approve matching requests from this program until the time limit expires": "Passende Anfragen dieses Programms bis zum Ablauf der Zeitbegrenzung erlauben",
+    "FIDO2 setup instructions": "Hinweise zur FIDO2-Einrichtung",
+    "Enable FIDO2 unlock": "FIDO2-Entsperrung aktivieren"
   }
 }

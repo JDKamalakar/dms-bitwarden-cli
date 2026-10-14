@@ -1,24 +1,16 @@
 #!/usr/bin/env node
-// Two places where data the panel did not write reaches the system: the
-// session-handoff file path, and a vault item's URI on its way to xdg-open.
+// The session-handoff file path, and item URIs on their way to xdg-open.
 //
 //   node tests/handoff-urls.test.js
 
+const { createSuite, loadModule } = require("./harness")
 const fs = require("fs")
 const path = require("path")
 const { execFileSync } = require("child_process")
 const os = require("os")
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.terminalLoginCommand = terminalLoginCommand
-  exports.sessionHandoffReadCommand = sessionHandoffReadCommand
-  exports.normalizeOpenableUrl = normalizeOpenableUrl
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (l, ok, d) => ok ? pass++ : failures.push(`${l}\n    ${d}`)
+const { check, done } = createSuite("handoff-urls")
 
 // --- the session handoff file never falls back to a shared directory --------
 // The key is written by a terminal and read by the panel. A world-writable
@@ -36,7 +28,7 @@ for (const [label, script] of [["terminal login", login], ["terminal unlock", un
 check("the write side refuses to run without a runtime dir, rather than defaulting",
   /XDG_RUNTIME_DIR:\?/.test(login), login)
 check("mkdir and chmod are both checked, so a directory that is not ours aborts",
-  login.includes('mkdir -p "$d" || exit 1') && login.includes('chmod 700 "$d" || exit 1'), login)
+  login.includes('mkdir -p -- "$d") || exit 1') && login.includes('chmod 700 -- "$d" || exit 1'), login)
 check("the write side refuses a symlinked handoff directory",
   login.includes('[ ! -L "$d" ]'), login)
 check("umask is set before the directory is created, not after",
@@ -65,7 +57,7 @@ const noRuntime = { PATH: bin + ":" + process.env.PATH, HOME: tmp }
 const withRuntime = { ...noRuntime, XDG_RUNTIME_DIR: tmp }
 
 // The inner script is what the terminal runs; pull it out of the quoted wrapper.
-const innerLogin = login.match(/then exec xdg-terminal-exec bash -c '(.*?)'; elif/s)[1].replace(/'\\''/g, "'")
+const innerLogin = login.match(/xdg-terminal-exec bash -c '(.*)' \|\| alacritty/)[1].replace(/'\\''/g, "'")
 
 const denied = runInner(innerLogin, noRuntime)
 check("with no runtime dir the login script exits non-zero and writes no key",
@@ -83,7 +75,7 @@ const handoffDir = path.join(tmp, "qs-bitwarden-cli")
 const redirectedDir = path.join(tmp, "redirected")
 fs.mkdirSync(redirectedDir)
 fs.symlinkSync(redirectedDir, handoffDir)
-const symlinkWrite = runInner(innerLogin.replace(/dms ipc call bitwarden[^;]*;/, "true;").replace(/read -p[^;]*;?/, ""), withRuntime)
+const symlinkWrite = runInner(innerLogin.replace(/dms ipc[^;]*;/, "true;").replace(/read -p[^;]*;?/, ""), withRuntime)
 check("a symlinked handoff directory makes terminal login fail closed",
   symlinkWrite.code !== 0 && !fs.existsSync(path.join(redirectedDir, "session-handoff")),
   `exit ${symlinkWrite.code}`)
@@ -95,7 +87,7 @@ fs.unlinkSync(handoffDir)
 
 // With a runtime dir, the round trip works and the directory is private.
 fs.mkdirSync(path.join(tmp, "qs-bitwarden-cli"), { recursive: true, mode: 0o755 })
-runInner(innerLogin.replace(/dms ipc call bitwarden[^;]*;/, "true;").replace(/read -p[^;]*;?/, ""), withRuntime)
+runInner(innerLogin.replace(/dms ipc[^;]*;/, "true;").replace(/read -p[^;]*;?/, ""), withRuntime)
 check("the handoff directory ends up private to the user",
   (fs.statSync(handoffDir).mode & 0o777) === 0o700,
   "0" + (fs.statSync(handoffDir).mode & 0o777).toString(8))
@@ -148,5 +140,18 @@ check("an ambiguous backslash web URL is refused instead of parsed differently b
     && opens("https://evil.example\\@trusted.example").reason === "ambiguous",
   JSON.stringify(opens("https://evil.example\\@trusted.example")))
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) { console.error("\nFAILURES:\n  " + failures.join("\n  ")); process.exit(1) }
+// xdg-open gets the target as one argument and the panel prints it in a
+// notification, so nothing that is not a single visible token goes through.
+for (const [label, input] of [
+  ["a space", "https://example.com/a b"],
+  ["a newline", "https://example.com/\n--help"],
+  ["a tab", "example.com\t/x"],
+  ["a NUL", "https://example.com/\u0000"],
+  ["an escape", "https://example.com/\u001b[2J"],
+  ["a DEL", "https://example.com/\u007f"]
+]) {
+  const r = opens(input)
+  check(`a URL with ${label} inside is refused`, !r.ok && r.reason === "ambiguous", JSON.stringify(r))
+}
+
+done()

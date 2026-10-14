@@ -5,6 +5,8 @@ import re,shutil,json,subprocess,os,tempfile,argparse
 repo=Path(__file__).resolve().parents[1]
 parser=argparse.ArgumentParser(description=__doc__)
 parser.add_argument('--screen', choices=('vault', 'login'), default='vault')
+parser.add_argument('--smoke-daemon', action='store_true', help='Load the complete daemon with disposable environment and failing CLI stubs')
+parser.add_argument('--test-ui', action='store_true', help='Run bounded fields and approval UI tests with native DMS controls')
 parser.add_argument('--check-controls', action='store_true', help='Exercise native inputs with disposable data')
 parser.add_argument('--dms-dir', type=Path, help='Installed DMS shell directory providing native widgets')
 parser.add_argument('--output', type=Path, default=repo/'docs/screenshots/dms-vault-preview.png')
@@ -15,7 +17,7 @@ workspace=tempfile.TemporaryDirectory(prefix='dms-bitwarden-preview-')
 tmp=Path(workspace.name)
 for p in repo.glob('*.qml'):
  if p.name not in ('BarWidget.qml','Settings.qml'):shutil.copy(p,tmp/p.name)
-shutil.copy(repo/'BitwardenModel.js',tmp/'BitwardenModel.js')
+for p in repo.glob('*.js'): shutil.copy(p,tmp/p.name)
 shutil.copytree(repo/'DmsUi',tmp/'DmsUi',dirs_exist_ok=True)
 # Load the actual installed native controls; never start host services.
 dms=args.dms_dir
@@ -41,19 +43,21 @@ def endblock(s,start):
    depth-=1
    if depth==0:return m.end()
  raise ValueError('unbalanced QML')
-s=(tmp/'Panel.qml').read_text()
-for pattern in [r'^  (?:Process|Timer|PamContext|IpcHandler|SshApprovalPopup) \{',r'^  Component\.on(?:Completed|Destruction): \{']:
- while m:=re.search(pattern,s,re.M):
-  end=endblock(s,s.index('{',m.start()));block=s[m.start():end]
-  ident=re.search(r'\bid: (\w+)',block)
-  replacement=''
-  if ident:
-   replacement='  QtObject { id: '+ident[1]+'''; property bool running: false; property bool active: false; property bool stdinEnabled: false; property var command: []; property var environment: ({}); property int interval: 0; function start() {} function stop() {} function restart() {} function write(value) {} function abort() {} }'''
-  s=s[:m.start()]+replacement+s[end:]
-s=s.replace('Quickshell.execDetached','root.demoNoop')
-s=s.replace('import Quickshell.Io\n', '').replace('import Quickshell.Services.Pam\n', '')
-s=s.replace('  id: root','  id: root\n  function demoNoop(value) {}',1)
-(tmp/'Panel.qml').write_text(s)
+if not args.smoke_daemon:
+ s=(tmp/'Service.qml').read_text()
+ for pattern in [r'^  (?:Process|VaultProcess|Timer|PamContext|IpcHandler|SshApprovalPopup|LidState) \{',r'^  Component\.on(?:Completed|Destruction): \{']:
+  while m:=re.search(pattern,s,re.M):
+   end=endblock(s,s.index('{',m.start()));block=s[m.start():end]
+   ident=re.search(r'\bid: (\w+)',block)
+   replacement=''
+   if ident:
+    replacement='  QtObject { id: '+ident[1]+'''; property bool running: false; property bool active: false; property bool stdinEnabled: false; property var command: []; property var environment: ({}); property int interval: 0; function start() {} function stop() {} function restart() {} function write(value) {} function abort() {} }'''
+   s=s[:m.start()]+replacement+s[end:]
+ s=s.replace('Quickshell.execDetached','root.demoNoop')
+ s=s.replace('import Quickshell.Services.Pam\n', '')
+ s=s.replace('  id: root','  id: root\n  function demoNoop(value) {}',1)
+ (tmp/'Service.qml').write_text(s)
+(tmp/'SshApprovalPopup.qml').write_text('import QtQuick\nItem { property var panel; property var vault; property Item anchorItem; readonly property bool open: false; property var unlockScreen: null; function refocus() {} }')
 # Isolate service imports; only data/geometry used by the actual controls remain.
 (tmp/'Common').mkdir(exist_ok=True);(tmp/'Services').mkdir(exist_ok=True)
 (tmp/'Common/qmldir').write_text('singleton Theme 1.0 Theme.qml\nsingleton SettingsData 1.0 SettingsData.qml\nsingleton I18n 1.0 I18n.qml\n')
@@ -135,14 +139,15 @@ Window {
  Text { text: "Search. Copy. Stay in flow."; color: "#e9e0f1"; font.family: "Inter"; font.pixelSize: 23 }
  Text { text: "Bitwarden + Vaultwarden\\nFingerprint & PIN unlock\\nEnglish + Deutsch"; color: "#b9adc9"; font.family: "Inter"; font.pixelSize: 19; lineHeight: 1.65 }
  }
- Panel { id: vault; x: 660; y: 64
+ Service { id: service
  Component.onCompleted: {
   status = "unlocked"; session = ""; userEmail = "demo@example.com";
   folders = Fixture.data.folders; items = Model.parseItems(JSON.stringify(Fixture.data.items));
-  cursorActive = true; currentScreen = "main"; isLoading = false; isSyncing = false; opened = true;
+  cursorActive = true; currentScreen = "main"; isLoading = false; isSyncing = false;
   refreshDerivedFromItems();
  }
  }
+ Panel { x: 660; y: 64; vault: service; opened: true }
  Text { x: 64; y: 670; text: "OFFICIAL BITWARDEN CLI  /  OPEN SOURCE"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 13; font.letterSpacing: 1.8 }
  Text { x: 660; y: 631; text: "Demo vault • No real credentials"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 14 }
  }
@@ -152,12 +157,38 @@ shell=tmp/'shell.qml'
 if args.screen == 'login':
  shell.write_text(shell.read_text().replace('status = "unlocked";', 'status = "unauthenticated";'))
 shell.write_text(shell.read_text().replace(chr(34)+'/tmp/bitwarden-dankbar-preview.png'+chr(34),json.dumps(str(output))))
+if args.smoke_daemon:
+ daemon=tmp/'Daemon.qml'
+ daemon.write_text(daemon.read_text().replace('id: root', 'id: root\n    readonly property var testService: service',1))
+ shell.write_text('''import QtQuick
+import QtQuick.Window
+import Quickshell
+Window {
+ visible: true; width: 640; height: 800
+ Daemon { id: daemon }
+ Timer { interval: 2500; running: true; onTriggered: {
+   if (!daemon.testService.live || !daemon.testService.started) throw new Error("service did not start")
+   if (daemon.testService.session !== "" || daemon.testService.vaultHelperState !== "stopped") throw new Error("missing helper did not fail closed")
+   console.warn("DMS_DAEMON_SMOKE_OK")
+   Qt.quit()
+ } }
+}
+''')
 env=dict(os.environ,QT_QPA_PLATFORM='offscreen',QT_QUICK_BACKEND='software',USER='demo',LOGNAME='demo',HOME=str(tmp),XDG_CONFIG_HOME=str(tmp/'config'),XDG_DATA_HOME=str(tmp/'data'),XDG_STATE_HOME=str(tmp/'state'))
 env.pop('WAYLAND_DISPLAY',None)
 env.pop('DISPLAY',None)
+env.pop('DBUS_SESSION_BUS_ADDRESS',None)
+env['XDG_RUNTIME_DIR']=str(tmp/'runtime')
+(tmp/'runtime').mkdir(mode=0o700)
+env['PATH']='/nonexistent'
+if args.smoke_daemon:
+ stubs=tmp/'stubs';stubs.mkdir()
+ for name in ['setsid','bash','bw','secret-tool','wl-copy','wl-paste','pinentry','pinentry-qt','systemd-inhibit','systemd-creds','notify-send','dms']:
+  f=stubs/name;f.write_text('#!/bin/sh\nexit 1\n');f.chmod(0o700)
+ env['PATH']=str(stubs)
 env['QT_QPA_PLATFORMTHEME']=''
 env['QT_QUICK_CONTROLS_STYLE']='Basic'
-if args.check_controls:
+if args.check_controls or args.test_ui:
  # QtTest runs the real controls without Quickshell's host module loader.
  (tmp/'qs').symlink_to(tmp, target_is_directory=True)
  for folder in ('Widgets','DankCommon/Widgets'):
@@ -171,17 +202,23 @@ if args.check_controls:
   file=common/f'{name}.qml'
   file.chmod(0o600)
   file.write_text(file.read_text().replace('import Quickshell', '').replace('Singleton {','Item {'))
- shutil.copy(repo/'demo/check-dms-controls.qml',tmp/'tst_controls.qml')
+ if args.test_ui:
+  shutil.copytree(repo/'tests/qml-kit',tmp/'tests/qml-kit')
+ else:
+  shutil.copy(repo/'demo/check-dms-controls.qml',tmp/'tst_controls.qml')
+ # Inert process objects let QtTest exercise asynchronous paste cancellation.
+ subprocess.run(['node',str(repo/'tests/qml-kit/kit-imports.js'),str(dms),str(tmp)],check=True)
  runner=shutil.which('qmltestrunner') or '/usr/lib/qt6/bin/qmltestrunner'
- checks=subprocess.run([runner,'-import',str(tmp),'-input',str(tmp/'tst_controls.qml'),'-o','-,txt'],env=env,capture_output=True,text=True,timeout=20)
- if checks.returncode or '3 passed, 0 failed' not in checks.stdout+checks.stderr:
+ checks=subprocess.run([runner,'-import',str(tmp),'-input',str(tmp/'tests/qml-kit' if args.test_ui else tmp/'tst_controls.qml'),'-o','-,txt'],env=env,capture_output=True,text=True,timeout=20)
+ if checks.returncode or 'FAIL!' in checks.stdout+checks.stderr:
   raise SystemExit(checks.stdout+checks.stderr)
  print(checks.stdout)
+ raise SystemExit(0)
 try:
- r=subprocess.run(['qs','-p',str(tmp/'shell.qml')],env=env,capture_output=True,text=True,timeout=20)
+ r=subprocess.run([shutil.which('qs'),'-p',str(tmp/'shell.qml')],env=env,capture_output=True,text=True,timeout=20)
 except subprocess.TimeoutExpired as error:
  raise SystemExit((error.stdout or b'').decode(errors='replace')+(error.stderr or b'').decode(errors='replace'))
 workspace.cleanup()
-if r.returncode or re.search(r'ERROR:|ReferenceError:|TypeError:|Cannot assign|Binding loop', r.stdout+r.stderr) or not output.is_file():
+if r.returncode or re.search(r'ERROR:|ReferenceError:|TypeError:|Cannot assign|Binding loop', r.stdout+r.stderr) or ("DMS_DAEMON_SMOKE_OK" not in r.stdout+r.stderr if args.smoke_daemon else not output.is_file()):
  raise SystemExit(r.stdout+r.stderr)
-print(output)
+print("DMS daemon smoke passed" if args.smoke_daemon else output)

@@ -1,0 +1,103 @@
+#!/usr/bin/env node
+// Builds a `qs` import tree from the installed Omarchy shell kit that a plain
+// qmltestrunner can load, so a test can build the plugin's own view files
+// (which import qs.Commons and qs.Ui) with the kit's real controls.
+//
+// The kit's Commons singletons read theme files and run hyprctl/fc-match
+// through Quickshell, which exists only inside the shell. Those members become
+// inert stand-ins (`property var name: null`, an empty env, a no-op exec);
+// everything else is copied unchanged, so a Button here is the shell's Button.
+// Ui files that need Quickshell themselves (the layer-shell windows) are copied
+// too but only compile if a test uses them.
+//
+//   node tests/qml-kit/kit-imports.js /usr/share/omarchy/shell <out-dir>
+//
+// leaves <out-dir>/qs/{Commons,Ui}; pass <out-dir> to qmltestrunner -import.
+
+const fs = require("fs")
+const path = require("path")
+
+const [kit, out] = process.argv.slice(2)
+if (!kit || !out) {
+  console.error("usage: kit-imports.js <omarchy-shell-dir> <out-dir>")
+  process.exit(2)
+}
+
+// `property Process name: Process { ... }` (and FileView), braces balanced.
+function stubMember(src, type) {
+  const opener = new RegExp(`^([ \\t]*)property ${type} (\\w+): ${type} \\{`, "m")
+  let m
+  while ((m = opener.exec(src))) {
+    let depth = 0
+    let i = src.indexOf("{", m.index)
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++
+      else if (src[i] === "}" && --depth === 0) break
+    }
+    src = src.slice(0, m.index) + `${m[1]}property var ${m[2]}: null` + src.slice(i + 1)
+  }
+  return src
+}
+
+function strip(src) {
+  let s = src.replace(/^import Quickshell(?:\.\w+)*[ \t]*$/gm, "")
+  s = s.replace(/Quickshell\.env\([^)]*\)/g, '""')
+  s = s.replace(/Quickshell\.execDetached\(/g, "(function() {})(")
+  s = stubMember(s, "Process")
+  s = stubMember(s, "FileView")
+  return s
+}
+
+// qmltestrunner has no `qs` binary, and Quickshell.Io's types are linked into
+// that binary (`prefer :/qt/qml/Quickshell/Io/`). A QML stand-in lets a field
+// construct Process without starting one. The shell itself still loads the
+// real module.
+const ioDir = path.join(out, "Quickshell", "Io")
+fs.mkdirSync(ioDir, { recursive: true })
+fs.writeFileSync(path.join(ioDir, "qmldir"), [
+  "module Quickshell.Io",
+  "depends QtQuick",
+  "Process 0.0 Process.qml",
+  "StdioCollector 0.0 StdioCollector.qml",
+  "",
+].join("\n"))
+fs.writeFileSync(path.join(ioDir, "Process.qml"), [
+  "import QtQuick",
+  "QtObject {",
+  "  property bool running: false",
+  "  property int processId: 0",
+  "  property var command: []",
+  "  property var stdout: null",
+  "  signal exited(int exitCode, int exitStatus)",
+  "  function signal(number) { running = false }",
+  "  function exec(cmd) { command = cmd }",
+  "}",
+  "",
+].join("\n"))
+fs.writeFileSync(path.join(ioDir, "StdioCollector.qml"), [
+  "import QtQuick",
+  "QtObject {",
+  "  property bool waitForEnd: true",
+  "  property string text: \"\"",
+  "  signal streamFinished()",
+  "}",
+  "",
+].join("\n"))
+
+// Plugin files that import Quickshell for execDetached get a recording stand-in.
+fs.writeFileSync(path.join(out, "Quickshell", "qmldir"), [
+  "module Quickshell",
+  "depends QtQuick",
+  "singleton Quickshell 0.0 Quickshell.qml",
+  "",
+].join("\n"))
+fs.writeFileSync(path.join(out, "Quickshell", "Quickshell.qml"), [
+  "pragma Singleton",
+  "import QtQuick",
+  "QtObject {",
+  "  property var detached: []",
+  "  function execDetached(cmd) { detached = detached.concat([cmd]) }",
+  "}",
+  "",
+].join("\n"))
+

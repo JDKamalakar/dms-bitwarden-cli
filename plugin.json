@@ -2,14 +2,14 @@
   "id": "bitwarden",
   "name": "Bitwarden Dankbar",
   "description": "Search and manage Bitwarden or Vaultwarden directly in DMS using the official Bitwarden CLI.",
-  "version": "1.8.1-dms.4",
+  "version": "1.11.6-dms.1",
   "author": "David Spencer; DMS port by coldi1337",
   "license": "MIT",
   "icon": "shield",
   "type": "composite",
   "components": {
     "widget": "./BarWidget.qml",
-    "daemon": "./Panel.qml"
+    "daemon": "./Daemon.qml"
   },
   "settings": "./Settings.qml",
   "capabilities": [
@@ -20,7 +20,11 @@
   "dependencies": [
     "bitwarden-cli",
     "jq",
-    "wl-clipboard"
+    "wl-clipboard",
+    "pinentry",
+    "argon2",
+    "libsecret",
+    "openssl"
   ],
   "permissions": [
     "settings_read",

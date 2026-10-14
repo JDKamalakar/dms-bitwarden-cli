@@ -1,0 +1,48 @@
+name: DMS checks
+on:
+  push:
+    branches: [main]
+    tags: ['dms/**']
+  pull_request:
+    branches: [main]
+permissions:
+  contents: read
+concurrency:
+  group: dms-checks-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  source:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: '22'
+      - name: Install test dependencies
+        run: |
+          sudo apt-get update -o APT::Update::Error-Mode=any
+          sudo apt-get install -y --no-install-recommends argon2 jq openssh-client libglib2.0-bin qt6-declarative-dev-tools qml6-module-qttest qml6-module-qtqml qml6-module-qtqml-workerscript qml6-module-qtquick qml6-module-qtquick-window qml6-module-qtquick-controls qml6-module-qtquick-templates
+          rustup toolchain install 1.98.0 --profile minimal
+          rustup default 1.98.0
+      - name: Build and self-test all local helpers
+        run: ./scripts/build-helpers.sh
+      - name: Rust regression tests
+        run: |
+          for crate in agent vault unlock-key; do
+            cargo test --manifest-path "$crate/Cargo.toml" --locked
+          done
+      - name: Model and process regression tests
+        shell: bash
+        run: |
+          # The real Quickshell detachment test needs the desktop runtime.
+          # It remains mandatory in tests/run.sh on the development desktop.
+          tests=()
+          for file in tests/*.test.js; do
+            if [[ "$file" != tests/detached-handoff.test.js ]]; then tests+=("$file"); fi
+          done
+          node --test "${tests[@]}"
+      - name: Qt regression tests
+        env:
+          QT_QPA_PLATFORM: offscreen
+          QML_XHR_ALLOW_FILE_READ: '1'
+        run: /usr/lib/qt6/bin/qmltestrunner -input tests/qml -o -,txt

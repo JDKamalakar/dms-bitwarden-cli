@@ -2,15 +2,17 @@
   "schemaVersion": 1,
   "id": "io.github.elevate08.qs-bitwarden-cli",
   "name": "Bitwarden",
-  "version": "1.8.1",
+  "version": "1.11.6",
   "author": "David Spencer",
   "license": "MIT",
   "description": "Bitwarden password manager integration for the Omarchy status bar and quick access panel.",
   "kinds": [
-    "bar-widget"
+    "bar-widget",
+    "service"
   ],
   "entryPoints": {
-    "barWidget": "Panel.qml"
+    "barWidget": "Panel.qml",
+    "service": "Service.qml"
   },
   "barWidget": {
     "displayName": "Bitwarden",
@@ -29,7 +31,9 @@
       "colorizeIcon": false,
       "suggestOnOpen": true,
       "fingerprintUnlock": false,
+      "fidoUnlock": false,
       "pinUnlock": false,
+      "usePinentry": true,
       "sshAgentEnabled": false,
       "sshAgentUnlockOnDemand": false,
       "sshAgentApprovalPopup": true,
@@ -113,15 +117,29 @@
         "key": "fingerprintUnlock",
         "type": "boolean",
         "label": "Unlock with fingerprint",
-        "description": "Use an enrolled fingerprint to unlock the vault. Requires 'omarchy setup security fingerprint'. Stores your master password in the OS login keyring so a verified fingerprint can unlock the vault, the same trade-off as Bitwarden desktop biometrics. Turning this off deletes the stored password.",
+        "description": "Use an enrolled fingerprint to unlock the vault. Requires 'omarchy setup security fingerprint'. Your master password is stored once, encrypted and sealed to this machine; this lets a verified fingerprint open it. A fingerprint releases no secret, so a program running as you could open it too -- the same trade-off as Bitwarden desktop biometrics. Turning this off removes the fingerprint's access.",
+        "defaultValue": false
+      },
+      {
+        "key": "fidoUnlock",
+        "type": "boolean",
+        "label": "Unlock with FIDO2 key",
+        "description": "Use a FIDO2 authenticator (YubiKey and friends) to unlock the vault. Requires 'omarchy setup security fido2'; that one registration also serves the system's own authentication prompts, and nothing is registered again. Your master password is stored once, encrypted and sealed to this machine; a touch asks the key for a secret only it can produce, and that secret opens it -- so unlocking needs the key itself, not just access to the keyring. Turning this off removes the key's access.",
         "defaultValue": false
       },
       {
         "key": "pinUnlock",
         "type": "boolean",
         "label": "Unlock with PIN",
-        "description": "Unlock the vault with a numeric PIN (6 digits or more recommended; 4 is the floor and is flagged as weak while you type). Your master password is encrypted with a key derived from the PIN and only the ciphertext is kept, so reading the keyring alone does not reveal it. Turning this off deletes the stored ciphertext.",
+        "description": "Unlock the vault with a numeric PIN of at least 6 digits (8 or more recommended; 6 and 7 are flagged as weak while you type). Your master password is stored once, encrypted and sealed to this machine; the PIN opens it through Argon2id, so reading the keyring alone does not reveal it. A program running as you can still copy the stored item and try PINs offline on every core: every 6-digit PIN in about 16 hours, 8 digits in about 2 months, on a 16-thread laptop. Turning this off removes the PIN's access for every account.",
         "defaultValue": false
+      },
+      {
+        "key": "usePinentry",
+        "type": "boolean",
+        "label": "Type secrets in pinentry",
+        "description": "Type your master password and PIN into pinentry, a separate window, instead of the panel, so they never enter the shell. Needs pinentry installed and the vault helper running; while the helper is not running, the panel waits for it instead of offering its own field.",
+        "defaultValue": true
       },
       {
         "key": "sshAgentEnabled",

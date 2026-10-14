@@ -1,11 +1,6 @@
-// A Text left on its default textFormat sniffs its own string and renders it
-// as HTML the moment it looks like markup. That is a real hazard in a panel
-// whose strings come out of a vault, and it is invisible in code review --
-// nothing in the QML says "HTML". So it is pinned here against Qt itself
-// rather than against our reading of the docs.
-//
-// Rendering is observed through contentWidth: markup that Qt parsed is markup
-// Qt did not draw, so the parsed line is narrower than the literal one.
+// A Text on its default textFormat renders markup-like strings as HTML, which
+// vault strings make a real hazard. Pinned against Qt itself: parsed markup is
+// not drawn, so the parsed line's contentWidth is narrower.
 //
 //   QT_QPA_PLATFORM=offscreen qmltestrunner -input tests/qml
 //
@@ -26,8 +21,9 @@ TestCase {
   // render the labels we hand them.
   Text { id: sniffing; font.pixelSize: 14 }
 
-  // What the plugin's own Text elements now declare.
+  // What the plugin's own Text elements, and the kit's, declare.
   Text { id: literal; textFormat: Text.PlainText; font.pixelSize: 14 }
+  Text { id: plainTwin; textFormat: Text.PlainText; font.pixelSize: 14 }
 
   function test_auto_text_swallows_markup_in_a_vault_value() {
     literal.text = tc.vaultName
@@ -42,12 +38,14 @@ TestCase {
     verify(literal.contentWidth > 0)
   }
 
-  function test_plainLabel_restores_the_literal_value_for_a_sniffing_control() {
-    literal.text = tc.vaultName
-    sniffing.text = Model.plainLabel(tc.vaultName)
-    // Same glyphs, so the same width: nothing was parsed away and no entity
-    // leaked through as "&amp;".
-    fuzzyCompare(sniffing.contentWidth, literal.contentWidth, 2.0)
+  // Omarchy 4.0.4's kit draws labels with Text.PlainText, so plainLabel hands
+  // the value through unchanged, and a plain-text control draws exactly it.
+  // (The escaped <span> it used to return was drawn literally by that kit.)
+  function test_plainLabel_hands_a_plain_text_control_the_literal_value() {
+    literal.text = Model.plainLabel(tc.vaultName)
+    compare(literal.text, tc.vaultName)
+    plainTwin.text = tc.vaultName
+    fuzzyCompare(literal.contentWidth, plainTwin.contentWidth, 0.5)
   }
 
   function test_plainLabel_leaves_an_ordinary_name_alone() {

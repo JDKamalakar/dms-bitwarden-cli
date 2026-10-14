@@ -1,24 +1,18 @@
 #!/usr/bin/env node
-// The detail screen draws every labelled, copyable field through DetailField.
-// These assertions guard the properties that make a card safe to put on
-// screen -- masking, empty-field suppression, and the promise that a copy
-// still goes through the panel's one clipboard path.
+// DetailField: masking, hiding empty fields, and copying through the panel's
+// one clipboard path.
 //
 //   node tests/detail-field.test.js
 
-const readEnglishQml = require("./helpers/english-qml.cjs")
-const fs = require("fs")
+const { createSuite, read, readPluginSource } = require("./harness")
 const path = require("path")
 
-const read = f => fs.existsSync(path.join(__dirname, "..", f))
-  ? readEnglishQml(path.join(__dirname, "..", f)) : ""
 
 const fieldSrc = read("DetailField.qml")
-const panelSrc = read("Panel.qml")
+const panelSrc = readPluginSource("Panel.qml")
+const customEditorSrc = readPluginSource("CustomFieldsEditor.qml")
 
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
+const { check, done } = createSuite("detail-field")
 
 check("DetailField exists", fieldSrc !== "", "DetailField.qml is missing")
 
@@ -48,15 +42,30 @@ check("field text is pinned to plain text",
 check("long values elide rather than pushing the row wider",
   /elide:\s*Text\.ElideRight/.test(fieldSrc), fieldSrc)
 
+check("unbounded custom-field names wrap within the detail width",
+  /PanelSectionHeader\s*\{[\s\S]{0,180}width:\s*parent\.width[\s\S]{0,100}wrapMode:\s*Text\.Wrap/.test(fieldSrc),
+  fieldSrc)
+
 // --- how the detail screen uses it -------------------------------------------
 
 const uses = panelSrc.match(/DetailField \{[\s\S]*?\n              \}/g) || []
 check("the detail screen draws its fields through the component",
   uses.length >= 14, `found ${uses.length} DetailField uses`)
 
+// A masked value is copied through copyDetailSecret(), which asks the vault's
+// master password re-prompt first and then uses the same clipboard path.
+const copiesThroughPanel = u => /onCopyRequested:\s*(?:\{[\s\S]{0,200}?)?root\.(?:copyToClipboard|copyDetailSecret)\(/.test(u)
 check("every use routes its copy through the panel's one clipboard path",
-  uses.every(u => /onCopyRequested:\s*root\.copyToClipboard\(/.test(u)),
-  uses.filter(u => !/onCopyRequested:\s*root\.copyToClipboard\(/.test(u)).join("\n---\n"))
+  uses.every(copiesThroughPanel),
+  uses.filter(u => !copiesThroughPanel(u)).join("\n---\n"))
+check("a masked value's copy asks the re-prompt first",
+  uses.filter(u => /sensitive:\s*true/.test(u)).every(u => /onCopyRequested:\s*root\.copyDetailSecret\(/.test(u)),
+  uses.filter(u => /sensitive:\s*true/.test(u) && !/onCopyRequested:\s*root\.copyDetailSecret\(/.test(u)).join("\n---\n"))
+check("which reaches the clipboard only through withReprompt, by field name, never by value",
+  /function copyDetailSecret\(field, label\) \{\s*root\.copyDetailField\(field, label\)/.test(panelSrc)
+    && /function copyDetailField\(key, label\)[\s\S]{0,200}?withReprompt\(item, function\(\) \{ root\.copyDetailFieldNow\(item, key, label\)/.test(panelSrc)
+    && /function protect\(item, action\) \{\s*root\.withReprompt\(item, action\)/.test(panelSrc),
+  "copyDetailSecret must go through the vault's re-prompt")
 
 // A card number, a security code, an SSN, a passport and a licence. Nothing
 // here can be rotated after it leaks, which is the argument for masking them
@@ -86,10 +95,8 @@ for (const label of ["Brand", "Cardholder Name", "Expires"]) {
 
 // --- reveals are per field ---------------------------------------------------
 //
-// One shared flag served every masked field to begin with, which was invisible
-// while a login had exactly one secret. A card has two and an identity three,
-// so revealing a card number also uncovered its security code, and an identity
-// showed its social security, passport and licence numbers together.
+//
+// Each masked field reveals on its own.
 
 const revealKeys = uses
   .filter(u => /sensitive:\s*true/.test(u))
@@ -99,19 +106,81 @@ check("every masked field has a reveal key", revealKeys.every(Boolean),
   JSON.stringify(revealKeys))
 check("no two masked fields share a reveal key",
   new Set(revealKeys).size === revealKeys.length, JSON.stringify(revealKeys))
+// Revealing goes through toggleProtectedReveal(), which asks the re-prompt
+// before showing and never before hiding.
 check("each toggles only its own key",
   uses.filter(u => /sensitive:\s*true/.test(u)).every(u => {
     const shown = (u.match(/revealed: root\.isFieldRevealed\("([^"]+)"\)/) || [])[1]
-    const toggled = (u.match(/onRevealToggled: root\.toggleFieldReveal\("([^"]+)"\)/) || [])[1]
+    const toggled = (u.match(/onRevealToggled: root\.toggleProtectedReveal\("([^"]+)"\)/) || [])[1]
     return shown && shown === toggled
   }), "a field must reveal and hide the same key")
+check("a reveal asks the re-prompt, a hide does not",
+  /function toggleProtectedReveal\(key\) \{\s*if \(root\.isFieldRevealed\(key\)\) root\.toggleFieldReveal\(key\)\s*else root\.protect\(root\.detailItem, function\(\) \{ root\.toggleFieldReveal\(key\) \}\)/.test(panelSrc),
+  "toggleProtectedReveal must hide at once and reveal through protect()")
+
+// --- custom fields ----------------------------------------------------------
+
+const customAt = panelSrc.indexOf("id: customFieldsSection")
+const customUse = customAt === -1 ? "" : panelSrc.slice(customAt, customAt + 1800)
+check("the detail screen has a custom-fields section",
+  customAt !== -1 && /text:\s*"CUSTOM FIELDS"/.test(customUse), customUse)
+check("custom fields are rendered from the parsed detail collection",
+  /id:\s*customFieldRepeater/.test(customUse)
+    && /model:\s*root\.detailItem\s*\?\s*root\.detailItem\.fields\s*:\s*\[\]/.test(customUse)
+    && /delegate:\s*DetailField/.test(customUse)
+    && /label:\s*modelData\.name/.test(customUse)
+    && /value:\s*root\.shownSecret\(revealKey, modelData\.value\)/.test(customUse),
+  customUse)
+check("hidden custom fields are masked and reveal independently",
+  /sensitive:\s*Boolean\(modelData\.sensitive\)/.test(customUse)
+    && /revealKey:\s*"customField:"\s*\+\s*modelData\.index/.test(customUse)
+    && /revealed:\s*root\.isFieldRevealed\(revealKey\)/.test(customUse)
+    && /onRevealToggled:\s*root\.toggleProtectedReveal\(revealKey\)/.test(customUse),
+  customUse)
+
+check("the item form edits the custom-field collection",
+  /CustomFieldsEditor\s*\{[\s\S]{0,100}panel:\s*root/.test(panelSrc)
+    && /id:\s*customFieldEditorRepeater/.test(customEditorSrc)
+    && /model:\s*editor\.panel\.formCustomFields/.test(customEditorSrc)
+    && /onTextChanged:\s*editor\.panel\.setFormCustomFieldValue\(fieldRow\.index,\s*text\)/.test(customEditorSrc),
+  customEditorSrc)
+check("value changes write through to the form array rather than a delegate copy",
+  !/fieldRow\.modelData\.(?:value|linkedId)\s*=(?!=)/.test(customEditorSrc)
+    && /formCustomFields\[index\]\.value\s*=\s*value/.test(panelSrc)
+    && /setFormCustomFieldValue\(fieldRow\.index,\s*fieldRow\.booleanValue\)/.test(customEditorSrc)
+    && /setFormCustomFieldLinkedId\(fieldRow\.index,\s*modelData\.id\)/.test(customEditorSrc),
+  customEditorSrc)
+check("field labels are read-only until their own edit button is pressed",
+  !/onTextChanged:\s*fieldRow\.modelData\.name\s*=\s*text/.test(customEditorSrc)
+    && /onClicked:\s*editor\.panel\.beginCustomFieldLabelEdit\(fieldRow\.index\)/.test(customEditorSrc)
+    && /visible:\s*fieldRow\.editingLabel/.test(customEditorSrc)
+    && /onClicked:\s*editor\.panel\.saveCustomFieldLabel\(fieldRow\.index\)/.test(customEditorSrc)
+    && /onClicked:\s*editor\.panel\.cancelCustomFieldLabelEdit\(\)/.test(customEditorSrc),
+  customEditorSrc)
+check("the form offers Bitwarden's type-aware custom-field controls",
+  /text:\s*"Text"/.test(customEditorSrc)
+    && /text:\s*"Hidden"/.test(customEditorSrc)
+    && /text:\s*"Boolean"/.test(customEditorSrc)
+    && /text:\s*"Linked"/.test(customEditorSrc)
+    && /password:\s*Number\(fieldRow\.modelData\.type\)\s*===\s*1/.test(customEditorSrc)
+    && /fieldRow\.booleanValue\s*=\s*!fieldRow\.booleanValue/.test(customEditorSrc),
+  customEditorSrc)
+check("custom fields can be added and removed from the form",
+  /onClicked:\s*editor\.panel\.removeFormCustomField\(fieldRow\.index\)/.test(customEditorSrc)
+    && /onClicked:\s*editor\.panel\.formPicker\s*=\s*"customAdd"/.test(customEditorSrc)
+    && /onClicked:\s*editor\.panel\.addFormCustomField\(\)/.test(customEditorSrc),
+  customEditorSrc)
+check("custom-field copies use the panel's guarded clipboard path",
+  /onCopyRequested:[\s\S]{0,200}?if \(sensitive\) root\.copyDetailSecret\(revealKey, modelData\.name\)\s*else root\.copyToClipboard\(modelData\.value, modelData\.name\)/.test(customUse),
+  customUse)
 
 check("no single shared reveal flag is left",
   !/root\.passwordRevealed/.test(panelSrc),
   "one flag for every masked field is what caused them to move together")
 
 check("toggling one key leaves the others alone",
-  /if \(next\[key\]\) delete next\[key\]\s*\n\s*else next\[key\] = true/.test(panelSrc),
+  /for \(var k in revealedFields\) next\[k\] = revealedFields\[k\]\s*\n\s*if \(value !== undefined\) next\[key\] = String\(value\)\s*\n\s*else delete next\[key\]/.test(panelSrc)
+    && /if \(isFieldRevealed\(key\)\) \{\s*setFieldRevealed\(key, undefined\)/.test(panelSrc),
   "expected a per-key toggle over a copy of the map")
 
 // `v` cannot mean five things at once, so it reaches the one secret the item is
@@ -176,8 +245,4 @@ check("an address is one copyable block, not seven rows",
     && /tooltipText: "Copy address"/.test(panelSrc),
   "an address is copied as an address")
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) {
-  console.error("\nFAILURES:\n  " + failures.join("\n  "))
-  process.exit(1)
-}
+done()

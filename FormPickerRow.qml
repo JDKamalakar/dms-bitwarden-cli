@@ -1,11 +1,8 @@
 import QtQuick
 import "DmsUi"
 
-// One row in an item-form picker: folder, organization, or collection.
-//
-// `multi` distinguishes the two behaviours. A folder or organization is a
-// single choice, so its mark is a tick; a collection is one of several an item
-// may belong to, so its mark is a checkbox that reads as toggleable.
+// One row in an item-form picker (folder, organization or collection). `multi`
+// shows a checkbox for multi-select collections instead of a tick.
 BorderSurface {
   id: row
 

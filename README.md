@@ -1,5 +1,33 @@
 # Bitwarden Dankbar
 
+> Version 1.11.6-dms.1: security core ported from upstream 1.11.6. Build all three
+> helpers after updating: `./scripts/build-helpers.sh`. DMS runs only local builds;
+> a missing or failed vault helper keeps the vault locked.
+
+The vault now lives in a separate process with core dumps disabled. The panel
+receives a redacted list and loads item secrets only when needed. Protected items
+require the master password before revealing, copying, editing, or exporting.
+Master passwords and PINs use a separate `pinentry` window by default.
+
+Runtime additions: `pinentry` (preferably `pinentry-qt`) and `argon2` for quick
+unlock; Rust/Cargo is needed to build the helpers. On Arch, install these using
+your package manager, then run the build script above. Fingerprint verification
+still uses DMS's `assets/pam/fprint`. Quick-unlock data is encrypted and sealed to
+this machine; existing entries migrate when successfully used. Do not delete
+legacy keyring entries manually during migration.
+
+A six-digit PIN still has limited offline resistance: upstream estimates about
+16 hours to try all values on a 16-thread laptop; eight digits take about
+2 months on that hardware. These are estimates, not a guarantee; use a longer PIN.
+FIDO2 is optional and requires an existing pam-u2f registration in
+`/etc/fido2/fido2`; this plugin does not enroll keys or modify system PAM.
+
+SSH grants are scoped to the key, program, signature purpose, and (for login)
+the bound server. Forwarded or unrecognized requests permit a single signature
+only. The optional **until screen lock** grant is retained and is revoked by
+DMS screen locking even when automatic vault locking is disabled.
+
+
 A Bitwarden and Vaultwarden plugin for DankMaterialShell, maintained by [coldi1337](https://github.com/coldi1337). Based on [Elevate08/qs-bitwarden-cli](https://github.com/Elevate08/qs-bitwarden-cli) by David Spencer. MIT licensed.
 
 Search, copy and manage a Bitwarden or Vaultwarden vault directly in a Quickshell panel. The official `bw` CLI performs vault operations. The plugin supports logins, secure notes, cards, identities, TOTP, folders, organizations, the password generator, Bitwarden Send and an optional SSH agent.
@@ -18,7 +46,9 @@ Translations are shipped in `translations/de.json` and loaded through DMS's plug
 
 - DankMaterialShell **1.6.0 or newer** and Quickshell.
 - The official Bitwarden CLI (`bw`) and `jq`.
-- `wl-copy` from `wl-clipboard` for clipboard operations.
+- `wl-copy` and `wl-paste` from `wl-clipboard` for bounded clipboard operations.
+- Locally built vault, unlock-key and SSH helpers (`./scripts/build-helpers.sh`).
+- `pinentry-qt` (or another `pinentry`) and `argon2` for quick unlock.
 - A running Secret Service provider (for example `gnome-keyring`) and `secret-tool` for remembering sessions, PIN and fingerprint unlock. Installing `libsecret` alone provides only the client, not a keyring service.
 - `gdbus` and `systemd-inhibit` for the suspend monitor.
 - An enrolled fingerprint and DMS's `assets/pam/fprint` configuration for fingerprint unlock.
@@ -37,6 +67,7 @@ The plugin is listed in the DMS plugin registry. For a direct installation from 
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins"
 git clone --branch main https://github.com/coldi1337/dms-bitwarden-cli.git \
   "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden"
+"${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden/scripts/build-helpers.sh"
 dms ipc call plugin-scan scan
 dms ipc call plugins enable bitwarden
 ```
@@ -47,6 +78,7 @@ To update a clean installation:
 
 ```sh
 git -C "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden" pull --ff-only
+"${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden/scripts/build-helpers.sh"
 dms restart
 ```
 
@@ -95,9 +127,12 @@ No Omarchy PAM service or additional `/etc/pam.d` file is needed. The setup prob
 
 If saving the master password reports that the OS keyring is unavailable, install/start a Secret Service provider and create or unlock its default keyring. The keyring password belongs in the desktop prompt, not in this plugin. Automatic keyring unlock at desktop login depends on the session/PAM configuration; fingerprint enrollment alone does not unlock the keyring.
 
-Fingerprint unlock is **off by default**. Enabling it stores the master password in the OS keyring: PAM verifies the finger, and the plugin retrieves that password to run `bw unlock`. Anyone who can read the unlocked keyring can therefore read the stored master password. Disabling the feature or logging out removes this stored copy. The master password is never a DMS preference or repository file.
-
-PIN unlock remains a separate optional feature. Its existing upstream implementation stores a PIN-encrypted master password in the keyring; a short PIN has a limited search space.
+Fingerprint unlock is **off by default**. Quick unlock stores an encrypted,
+machine-sealed envelope in Secret Service. Fingerprint authorization is a UI
+policy: another process running as your user may still access the unlocked
+keyring and machine credentials. It is not a boundary against malicious code
+running as you. Use master-password-only unlock if that trade-off is unsuitable.
+PIN unlock is optional and has the offline-guessing limits described above.
 
 ## Settings and locking
 
@@ -155,6 +190,7 @@ For a development checkout, link the repository into DMS instead of cloning into
 ```sh
 mkdir -p "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins"
 ln -s "$PWD" "${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden"
+"${XDG_CONFIG_HOME:-$HOME/.config}/DankMaterialShell/plugins/bitwarden/scripts/build-helpers.sh"
 dms ipc call plugin-scan scan
 dms ipc call plugins enable bitwarden
 ```

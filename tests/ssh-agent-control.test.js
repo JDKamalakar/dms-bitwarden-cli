@@ -1,42 +1,20 @@
 #!/usr/bin/env node
-// The panel supervises the SSH companion; it never waits on it. These tests
-// cover the pure supervision logic (path resolution, the minimal environment,
-// the bounded NDJSON reader, and the restart state machine) and then drive
-// that logic with real child processes -- a fake helper and, when it has been
-// built, the real one -- so the handshake is proven across the process
-// boundary rather than against a mock.
+// Supervision of the SSH companion, which the panel never waits on: path
+// resolution, the minimal environment, the bounded NDJSON reader and the
+// restart state machine, then the handshake with real child processes (a fake
+// helper, and the real one when built).
 //
 //   node tests/ssh-agent-control.test.js
 
+const { createSuite, loadModule, readPluginSource, repoRoot } = require("./harness")
 const fs = require("fs")
 const os = require("os")
 const path = require("path")
 const { spawn } = require("child_process")
 
-const repoRoot = path.join(__dirname, "..")
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(repoRoot, "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.pluginDirFromUrl = pluginDirFromUrl
-  exports.sshAgentHelperPath = sshAgentHelperPath
-  exports.sshAgentHelperCommand = sshAgentHelperCommand
-  exports.sshAgentHelperEnv = sshAgentHelperEnv
-  exports.sshAgentHelloLine = sshAgentHelloLine
-  exports.sshAgentShutdownLine = sshAgentShutdownLine
-  exports.parseAgentEvent = parseAgentEvent
-  exports.sshAgentRestartDelayMs = sshAgentRestartDelayMs
-  exports.sshAgentInitialState = sshAgentInitialState
-  exports.sshAgentReduce = sshAgentReduce
-  exports.sshAgentMaxRestarts = sshAgentMaxRestarts
-  exports.sshAgentHandshakeTimeoutMs = sshAgentHandshakeTimeoutMs
-  exports.sshAgentMaxLineBytes = sshAgentMaxLineBytes
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
-const eq = (label, actual, expected) =>
-  check(label, actual === expected, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+const { check, eq, done, failures } = createSuite("ssh-agent-control")
 
 // -------------------------------------------------------------------------
 // Absolute, plugin-relative helper path
@@ -55,10 +33,10 @@ eq("plugin dir refuses an encoded traversal", Model.pluginDirFromUrl("file:///op
 eq("plugin dir refuses an empty url", Model.pluginDirFromUrl(""), "")
 eq("plugin dir refuses a non-string", Model.pluginDirFromUrl(null), "")
 
-eq("helper path is plugin-relative and absolute",
-  Model.sshAgentHelperPath("/opt/bw"), "/opt/bw/agent/target/debug/qs-bitwarden-ssh-agent")
-eq("helper path refuses a relative plugin dir", Model.sshAgentHelperPath("opt/bw"), "")
-eq("helper path refuses an empty plugin dir", Model.sshAgentHelperPath(""), "")
+eq("plugin dir loses trailing slashes", Model.cleanAbsoluteDir("/opt/bw//"), "/opt/bw")
+eq("plugin dir refuses a relative path", Model.cleanAbsoluteDir("opt/bw"), "")
+eq("plugin dir refuses an empty path", Model.cleanAbsoluteDir(""), "")
+eq("plugin dir refuses a dot segment", Model.cleanAbsoluteDir("/opt/../etc"), "")
 
 // The source is chosen by the bundle inspection (see ssh-agent-bundle.test.js),
 // and the command follows it rather than guessing. Launching an unvetted
@@ -67,7 +45,9 @@ const helperCmd = Model.sshAgentHelperCommand("/opt/bw", "development")
 eq("helper runs directly with no shell and no arguments", helperCmd.length, 1)
 eq("helper command is the absolute helper path", helperCmd[0],
   "/opt/bw/agent/target/debug/qs-bitwarden-ssh-agent")
-eq("a bundled source never launches", Model.sshAgentHelperCommand("/opt/bw", "bundled").length, 0)
+eq("the shipped helper is launched when that is what was accepted",
+  Model.sshAgentHelperCommand("/opt/bw", "bundled").length,
+  0)
 eq("no accepted source launches nothing", Model.sshAgentHelperCommand("/opt/bw", "").length, 0)
 eq("an unknown source launches nothing", Model.sshAgentHelperCommand("/opt/bw", "elsewhere").length, 0)
 check("helper command never goes through a shell",
@@ -91,8 +71,8 @@ eq("helper environment refuses an empty runtime dir", Model.sshAgentHelperEnv(""
 // Bounded NDJSON reader
 // -------------------------------------------------------------------------
 
-eq("hello is the versioned v2 handshake", Model.sshAgentHelloLine(), '{"v":2,"type":"hello"}\n')
-eq("shutdown is a versioned v2 line", Model.sshAgentShutdownLine(), '{"v":2,"type":"shutdown"}\n')
+eq("hello is the versioned v1 handshake", Model.sshAgentHelloLine(), '{"v":2,"type":"hello"}\n')
+eq("shutdown is a versioned v1 line", Model.sshAgentShutdownLine(), '{"v":2,"type":"shutdown"}\n')
 
 const ready = Model.parseAgentEvent(JSON.stringify({
   v: 2, type: "ready", socketPath: "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock",
@@ -176,7 +156,7 @@ check("the gate stays closed while handshaking", handshaking.state.gateOpen === 
   JSON.stringify(handshaking.state))
 
 const live = reachReady(0)
-eq("a v2 ready completes the handshake", live.state.phase, "ready")
+eq("a v1 ready completes the handshake", live.state.phase, "ready")
 check("ready opens the signing gate", live.state.gateOpen === true, JSON.stringify(live.state))
 eq("ready records the socket path", live.state.socketPath, "/run/user/1000/qs-bitwarden-cli/ssh-agent.sock")
 eq("ready records the fifo path", live.state.fifoPath, "/run/user/1000/qs-bitwarden-cli/ssh-keys.fifo")
@@ -213,6 +193,15 @@ const passthrough = drive(reachReady(0).state, [{
 }])
 eq("a live event stays ready", passthrough.state.phase, "ready")
 eq("a live event reaches the panel", passthrough.last.message.type, "keys_loaded")
+
+const loadFailed = drive(reachReady(0).state, [{
+  kind: "line", nowMs: 100,
+  line: JSON.stringify({ v: 2, type: "load_failed", epoch: 7 })
+}])
+eq("a load failure stays ready so the panel can retry", loadFailed.state.phase, "ready")
+eq("a load failure reaches the panel", loadFailed.last.message.type, "load_failed")
+check("a load failure does not close the signing gate", loadFailed.state.gateOpen === true,
+  JSON.stringify(loadFailed.state))
 
 const secondReady = drive(reachReady(0).state, [{ kind: "line", line: readyLine, nowMs: 100 }])
 eq("a duplicate ready is a protocol violation", secondReady.state.errorCode, "PROTOCOL")
@@ -279,10 +268,8 @@ eq("a failed supervisor stays failed", failedIgnores.state.phase, "failed")
 check("a failed supervisor starts nothing", failedIgnores.actions.every(a => !a.start),
   JSON.stringify(failedIgnores.actions))
 
-// The loop that actually happens in practice: the helper starts fine, answers
-// the handshake, serves briefly, and dies -- over and over. Completing a
-// handshake must not wipe the failure history, or a helper that crashes a
-// second after every start is restarted forever.
+// The real-world loop: start, handshake, die, repeat. A handshake must not
+// reset the failure count, or such a helper restarts forever.
 {
   let crashy = Model.sshAgentInitialState()
   let scheduled = 0
@@ -306,6 +293,128 @@ check("a failed supervisor starts nothing", failedIgnores.actions.every(a => !a.
   eq("that loop is reported as a crash loop", crashy.errorCode, "CRASH_LOOP")
   eq("that loop is bounded by the same restart cap", scheduled, Model.sshAgentMaxRestarts())
   check("that loop leaves the gate closed", crashy.gateOpen === false, JSON.stringify(crashy))
+}
+
+// -------------------------------------------------------------------------
+// Served elsewhere
+// -------------------------------------------------------------------------
+//
+// A helper that loses the runtime lock to another process exits like a crash;
+// the panel probes the lock, and a held lock is its own state, not CRASH_LOOP.
+
+const retryElsewhere = Model.SSH_AGENT_ELSEWHERE_RETRY_MS
+check("the elsewhere retry is slow, not a backoff step",
+  retryElsewhere >= 10000 && retryElsewhere <= 120000, String(retryElsewhere))
+
+const elsewhere = drive(enabled.state, [
+  { kind: "started", nowMs: 1 },
+  { kind: "exited", exitCode: 1, lockHeld: true, nowMs: 2 }
+])
+eq("a start that lost the lock is served elsewhere", elsewhere.state.phase, "elsewhere")
+eq("and says so", elsewhere.state.errorCode, "ELSEWHERE")
+eq("it does not count as a failure", elsewhere.state.failures, 0)
+eq("it retries on the slow interval", elsewhere.last.restartInMs, retryElsewhere)
+check("the gate stays closed and nothing is claimed", elsewhere.state.gateOpen === false
+  && elsewhere.state.socketPath === "" && elsewhere.state.fifoPath === "", JSON.stringify(elsewhere.state))
+
+let patient = elsewhere.state
+for (let i = 0; i < Model.sshAgentMaxRestarts() * 3; i++) {
+  patient = Model.sshAgentReduce(patient, { kind: "restartTimer", nowMs: 10 + i * 2 }).state
+  patient = Model.sshAgentReduce(patient, { kind: "started", nowMs: 11 + i * 2 }).state
+  patient = Model.sshAgentReduce(patient, { kind: "exited", exitCode: 1, lockHeld: true, nowMs: 12 + i * 2 }).state
+}
+eq("waiting on another agent never becomes a crash loop", patient.phase, "elsewhere")
+eq("however long it waits", patient.failures, 0)
+
+const retried = drive(elsewhere.state, [{ kind: "restartTimer", nowMs: 100 }])
+eq("the retry starts the helper again", retried.last.start, true)
+eq("from the starting phase", retried.state.phase, "starting")
+
+const freed = drive(elsewhere.state, [
+  { kind: "restartTimer", nowMs: 100 },
+  { kind: "started", nowMs: 101 },
+  { kind: "line", line: readyLine, nowMs: 102 }
+])
+eq("once the lock is free the helper comes up normally", freed.state.phase, "ready")
+eq("and the elsewhere message clears", freed.state.errorCode, "")
+
+const realCrash = drive(elsewhere.state, [
+  { kind: "restartTimer", nowMs: 100 },
+  { kind: "started", nowMs: 101 },
+  { kind: "exited", exitCode: 1, lockHeld: false, nowMs: 102 }
+])
+eq("a failure with the lock free is an ordinary failure", realCrash.state.phase, "backoff")
+eq("and counts", realCrash.state.failures, 1)
+
+const afterReady = drive(reachReady(0).state, [{ kind: "exited", exitCode: 1, lockHeld: true, nowMs: 5 }])
+eq("a run that reached ready cannot have lost the lock, whatever the probe says", afterReady.state.phase, "backoff")
+
+const disabledWhileWaiting = drive(elsewhere.state, [{ kind: "enabled", value: false, nowMs: 50 }])
+eq("disabling while served elsewhere turns it off", disabledWhileWaiting.state.phase, "disabled")
+check("and cancels the pending retry", disabledWhileWaiting.last.cancelRestart === true, JSON.stringify(disabledWhileWaiting.last))
+
+const elsewhereSetup = Model.sshAgentSetupState({ enabled: true, supervisable: true, phase: "elsewhere", errorCode: "ELSEWHERE" })
+check("settings explain that another process is serving the agent",
+  elsewhereSetup.state === "error" && /another/i.test(elsewhereSetup.message) && !/keeps failing/i.test(elsewhereSetup.message),
+  JSON.stringify(elsewhereSetup))
+
+// The probe itself, against a real lock.
+check("no runtime directory, no probe", Model.sshAgentLockProbeCommand("") === null
+  && Model.sshAgentLockProbeCommand("relative/dir") === null, "expected null")
+check("only the probe's conflict code means held",
+  Model.sshAgentLockHeld(75) === true && Model.sshAgentLockHeld(0) === false
+    && Model.sshAgentLockHeld(1) === false && Model.sshAgentLockHeld(127) === false, "exit codes")
+{
+  const { spawnSync } = require("child_process")
+  const rt = fs.mkdtempSync(path.join(os.tmpdir(), "qsbw-lock-"))
+  const dir = path.join(rt, "qs-bitwarden-cli")
+  const lock = path.join(dir, "ssh-agent.lock")
+  const probe = () => {
+    const cmd = Model.sshAgentLockProbeCommand(rt)
+    return spawnSync(cmd[0], cmd.slice(1), { encoding: "utf8" }).status
+  }
+  try {
+    fs.mkdirSync(dir, { mode: 0o700 })
+    check("a missing lock file reads as free", Model.sshAgentLockHeld(probe()) === false, "expected free")
+    check("and the probe does not create it -- the helper refuses a lock file it did not make 0600",
+      !fs.existsSync(lock), "probe created the lock file")
+    fs.writeFileSync(lock, "", { mode: 0o600 })
+    check("an unheld lock reads as free", Model.sshAgentLockHeld(probe()) === false, "expected free")
+    const holder = spawnSync("bash", ["-c", `flock -n "$1" bash -c 'echo held' ; true`, "_", lock], { encoding: "utf8" })
+    check("the test can take the lock at all", /held/.test(holder.stdout), holder.stderr)
+    const held = require("child_process").spawn("flock", [lock, "sleep", "5"], { stdio: "ignore" })
+    const until = Date.now() + 3000
+    let heldCode = 0
+    while (Date.now() < until) {
+      heldCode = probe()
+      if (Model.sshAgentLockHeld(heldCode)) break
+      spawnSync("sleep", ["0.05"])
+    }
+    check("a lock held by another process reads as held", Model.sshAgentLockHeld(heldCode) === true, "exit " + heldCode)
+    held.kill("SIGKILL")
+    const statAfter = fs.statSync(lock)
+    check("probing leaves the lock file's mode alone", (statAfter.mode & 0o777) === 0o600, (statAfter.mode & 0o777).toString(8))
+    fs.rmSync(lock)
+    fs.symlinkSync("/etc/hostname", lock)
+    check("a symlinked lock is never opened", Model.sshAgentLockHeld(probe()) === false, "expected free without following")
+  } finally {
+    fs.rmSync(rt, { recursive: true, force: true })
+  }
+}
+
+{
+  const vaultSrc = readPluginSource("Panel.qml")
+  const exitHandler = vaultSrc.slice(vaultSrc.indexOf("function onSshAgentHelperExited("), vaultSrc.indexOf("function startSshAgentHelper("))
+  check("the helper's exit goes through the lock probe rather than straight to the reducer",
+    /id: sshAgentProc[\s\S]{0,900}onExited: function\(exitCode\) \{\s*sshAgentTerminateTimer\.stop\(\)\s*root\.onSshAgentHelperExited\(exitCode\)/.test(vaultSrc),
+    "sshAgentProc.onExited must call onSshAgentHelperExited")
+  check("only an exit before the handshake is probed; anything else is reported at once",
+    /sshAgentPhase !== "starting" && root\.sshAgentPhase !== "handshaking"/.test(exitHandler)
+      && /kind: "exited", exitCode: exitCode/.test(exitHandler),
+    exitHandler)
+  check("the probe's answer travels with the exit it explains",
+    /id: sshAgentLockProbeProc[\s\S]{0,300}kind: "exited", exitCode: root\.sshAgentPendingExitCode,\s*lockHeld: Model\.sshAgentLockHeld\(exitCode\)/.test(vaultSrc),
+    "probe exit must report lockHeld")
 }
 
 // A helper that ran healthily for a long time is not a crash loop.
@@ -496,7 +605,7 @@ async function processTests() {
 // approval screen have their own. A check that reads only the largest one
 // silently narrows as markup moves out of it.
 const panelSrc = ["Panel.qml", "SshAgentSettings.qml", "SshApprovalScreen.qml"]
-  .map(file => fs.readFileSync(path.join(repoRoot, file), "utf8"))
+  .map(readPluginSource)
   .join("\n")
 check("the supervisor Process is tracked, not detached",
   !/execDetached\([^)]*sshAgent/i.test(panelSrc), "found execDetached for the ssh agent")
@@ -509,10 +618,8 @@ check("the supervisor uses a minimal environment",
   /id:\s*sshAgentProc[\s\S]{0,600}?clearEnvironment:\s*true/.test(panelSrc),
   "sshAgentProc does not clear its environment")
 
-// The helper cleans up its socket and FIFO when its control channel closes,
-// and not when it is signalled. A stop that goes straight to SIGTERM leaves
-// both behind for the next start to reclaim, so the supervisor has to ask
-// before it terminates.
+// The helper removes its socket and FIFO when its control channel closes, not
+// on a signal, so stopping asks first.
 check("stopping the helper closes its control channel first",
   /function stopSshAgentHelper\(\)[\s\S]{0,600}?stdinEnabled = false/.test(panelSrc),
   "the stop path never closes stdin")
@@ -527,11 +634,6 @@ check("starting the helper reopens its control channel",
   "a restarted helper would have no control channel")
 
 processTests().then(() => {
-  if (failures.length) {
-    console.error(`\n${failures.length} failed, ${pass} passed\n`)
-    failures.forEach(f => console.error(`  FAIL ${f}`))
-    process.exit(1)
-  }
-  console.log(`ssh-agent-control: ${pass} passed`)
+  done()
   try { fs.rmSync(tmpRoot, { recursive: true, force: true }) } catch (e) {}
 })

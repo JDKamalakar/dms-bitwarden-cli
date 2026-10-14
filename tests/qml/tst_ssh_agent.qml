@@ -2,11 +2,8 @@ import QtQuick
 import QtTest
 import "../../BitwardenModel.js" as Model
 
-// The supervision logic runs inside QML's own JavaScript engine, not Node's.
-// These cases re-prove the properties the panel depends on -- the inert
-// default, the one transition that opens the signing gate, and the bounded
-// failure paths -- against that engine, and check that the reducer never asks
-// the caller to wait for anything.
+// The supervision logic in QML's own JS engine: the inert default, the one
+// transition that opens the gate, bounded failures, and nothing ever waits.
 TestCase {
   name: "SshAgent"
 
@@ -73,7 +70,7 @@ TestCase {
     compare(cmd.length, 1)
     compare(cmd[0].charAt(0), "/")
     verify(cmd[0].indexOf("/home/u/.config/omarchy/plugins/bw/") === 0)
-    compare(Model.sshAgentHelperCommand(Model.pluginDirFromUrl("file:///opt/bw/../etc/"), "development").length, 0)
+    compare(Model.sshAgentHelperCommand(Model.pluginDirFromUrl("file:///opt/bw/../etc/"), "bundled").length, 0)
     compare(Model.sshAgentHelperCommand(dir, "").length, 0)
   }
 

@@ -3,17 +3,25 @@ import Quickshell
 import Quickshell.Wayland
 import "DmsUi"
 
-// A transient, centered SSH authorization surface. The full-screen layer
-// window supplies the scrim, outside-click denial, and keyboard focus; only
-// the compact card is visible. It is tied to the bar widget's screen but not
-// positioned relative to the bar, so the plugin otherwise stays out of sight.
+// A centered SSH authorization card on the bar's screen. The full-screen layer
+// window supplies the scrim, deny-on-outside-click and keyboard focus.
 PanelWindow {
   id: popup
 
   required property var panel
+  // The vault this panel shows (Service.qml); `panel` is the view that draws it.
+  required property var vault
   required property Item anchorItem
+  readonly property alias unlockScreen: unlockScreen
 
-  readonly property bool open: panel.sshAgentApprovalPopup && (panel.sshPrompt !== null || panel.sshUnlockRequest !== null)
+  // Every monitor's bar has this popup; only the presenting view shows it (two
+  // would fight over exclusive keyboard focus).
+  readonly property bool presenting: vault.presenter === panel
+  // Not while pinentry asks for a password: an overlay with exclusive
+  // keyboard focus would cover it.
+  readonly property bool open: presenting && vault.sshAgentApprovalPopup
+    && (vault.sshPrompt !== null || vault.sshUnlockRequest !== null)
+    && !vault.pinentryActive
   property bool focusPrimed: false
   readonly property var anchorWindow: anchorItem ? anchorItem.QsWindow.window : null
   readonly property int cardWidth: Math.max(1, Math.min(Style.space(460), width - Style.gapsOut * 2))
@@ -25,12 +33,20 @@ PanelWindow {
     if (open && backingWindowVisible) focusPrimeTimer.restart()
   }
 
+  // The screen on the card: the approval, or the unlock that precedes it.
+  readonly property var shownScreen: vault.sshPrompt ? approvalScreen : unlockScreen
+  // Until the screen on the card has armed, keys typed at the card are
+  // dropped (see SshApprovalScreen.qml).
+  readonly property bool armed: shownScreen.armed
+
+  // Every refocus (the card opening, the focus prime landing, the request or
+  // the vault's status changing) starts the screen's arming delay over.
   function refocus() {
     if (!open) return
     Qt.callLater(function() {
       if (!popup.open) return
-      if (popup.panel.sshPrompt) approvalScreen.focusDefault()
-      else unlockScreen.focusDefault()
+      popup.shownScreen.rearm()
+      popup.shownScreen.focusDefault()
     })
   }
 
@@ -67,7 +83,7 @@ PanelWindow {
   }
 
   Connections {
-    target: popup.panel
+    target: popup.vault
     function onSshPromptChanged() { popup.refocus() }
     function onSshUnlockRequestChanged() { popup.refocus() }
     function onStatusChanged() { popup.refocus() }
@@ -90,7 +106,7 @@ PanelWindow {
 
   MouseArea {
     anchors.fill: parent
-    onClicked: popup.panel.denySshRequest()
+    onClicked: popup.vault.denySshRequest()
   }
 
   BorderSurface {
@@ -104,8 +120,7 @@ PanelWindow {
       Math.max(1, Style.space(2)))
     padding: Style.spacing.panelPadding
 
-    // Swallow clicks on unused card space; only a click outside the card is a
-    // denial. Interactive children declared below remain above this catcher.
+    // Clicks on the card itself are not a denial.
     MouseArea { anchors.fill: parent; onClicked: {} }
 
     Item {
@@ -121,13 +136,17 @@ PanelWindow {
       Keys.onPressed: function(event) {
         if (event.key === Qt.Key_Escape) {
           if (!(event.modifiers & ~Qt.KeypadModifier)) {
-            popup.panel.denySshRequest()
+            popup.vault.denySshRequest()
             event.accepted = true
           } else if (event.modifiers & Qt.ShiftModifier) {
-            popup.panel.denyAllSshRequests()
+            popup.vault.denyAllSshRequests()
             event.accepted = true
           }
+          return
         }
+        // Not armed yet: this scope may hold focus itself (before the first
+        // refocus), and Tab from here would walk to a tile.
+        if (!popup.armed) event.accepted = true
       }
 
       Flickable {
@@ -147,13 +166,15 @@ PanelWindow {
           SshUnlockScreen {
             id: unlockScreen
             panel: popup.panel
-            active: popup.open && popup.panel.sshPrompt === null
+            vault: popup.vault
+            active: popup.open && popup.vault.sshPrompt === null
           }
 
           SshApprovalScreen {
             id: approvalScreen
             panel: popup.panel
-            active: popup.open && popup.panel.sshPrompt !== null
+            vault: popup.vault
+            active: popup.open && popup.vault.sshPrompt !== null
           }
         }
       }

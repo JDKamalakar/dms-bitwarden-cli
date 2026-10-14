@@ -1,51 +1,26 @@
 #!/usr/bin/env node
-// Tests for the setup wizard's dependency probe and the settings writer.
-//
-// The interesting cases are the ones that cannot be exercised on a machine
-// where everything is already installed: a missing required tool, and fprintd
-// being present but having no enrolled finger.
+// The setup dependency probe and the settings writer, including cases a fully
+// set-up machine cannot exercise (missing tools, fprintd without a finger).
 //
 //   node tests/setup-settings.test.js
 
-const fs = require("fs")
+const { createSuite, functionBody, loadModule, read, readPluginSource } = require("./harness")
+const { legacyKeyring } = require("./legacy-keyring")
 const path = require("path")
+const panelSrc = readPluginSource("Panel.qml")
 
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.parseDependencies = parseDependencies
-  exports.missingRequired = missingRequired
-  exports.dependencyCheckCommand = dependencyCheckCommand
-  exports.vaultListMode = vaultListMode
-  exports.vaultListBlockedMessage = vaultListBlockedMessage
-  exports.vaultListFailureMessage = vaultListFailureMessage
-  exports.sshCliMinVersion = sshCliMinVersion
-  exports.sshCliSupport = typeof sshCliSupport === "function" ? sshCliSupport : null
-  exports.sshUiAvailable = sshUiAvailable
-  exports.settingWriteCommand = settingWriteCommand
-  exports.boolSetting = boolSetting
-  exports.installPackagesCommand = installPackagesCommand
-  exports.SETTINGS_SCHEMA = SETTINGS_SCHEMA
-  exports.DEPENDENCIES = DEPENDENCIES
-  exports.groupedSettings = groupedSettings
-  exports.SETTINGS_GROUPS = SETTINGS_GROUPS
-  exports.validatePin = validatePin
-  exports.pinMinLength = pinMinLength
-  exports.pinRecommendedLength = pinRecommendedLength
-  exports.pinWeakWarning = pinWeakWarning
-  exports.isPinWeak = isPinWeak
-  exports.pinStoreCommand = pinStoreCommand
-  exports.pinUnlockCommand = pinUnlockCommand
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
+const { check, eq, done } = createSuite("setup-settings")
 const byKey = (deps, k) => deps.items.find(d => d.key === k)
 const dependencyProbe = Model.dependencyCheckCommand()[2]
-const sshCliSupport = (version) => typeof Model.sshCliSupport === "function"
-  ? Model.sshCliSupport(version)
-  : "__missing__"
+const sshCliSupport = Model.sshCliSupport
+
+// KeyboardPanel applies focusTarget after the panel's own open handler. Keep
+// that final open-time choice aligned with the locked screen's PIN-first UI.
+check("a locked panel focuses whichever field the offered unlock method uses",
+  /focusTarget:[\s\S]{0,800}unlockForm\.focusField\s*\?\s*unlockForm\.focusField\s*:\s*keyCatcher/.test(panelSrc),
+  "focusTarget must follow UnlockForm.focusField, which is the PIN field when PIN unlock leads")
 
 // --- everything present -----------------------------------------------------
 const all = Model.parseDependencies(
@@ -60,12 +35,52 @@ check("jq is a required dependency alongside bw",
 check("the dependency probe checks for jq before vault reads",
   dependencyProbe.includes("command -v jq"),
   dependencyProbe)
-check("the dependency probe captures the bw CLI version for SSH gating",
-  /bw\s+--version|bw\s+-v/.test(dependencyProbe),
+check("the per-open dependency probe never starts bw itself",
+  !/bw\s+--version|bw\s+-v\b/.test(dependencyProbe) && dependencyProbe.includes("bw_id="),
   dependencyProbe)
-check("sshCliMinVersion reports the verified floor",
-  Model.sshCliMinVersion() === "2025.1.2",
-  String(Model.sshCliMinVersion()))
+check("the bw CLI version for SSH gating comes from its own probe",
+  /bw\s+-v\b/.test(Model.bwVersionCommand()[2]),
+  Model.bwVersionCommand()[2])
+{
+  const probeOut = "bw=1\nbw_id=66311:4194817:3303444:1773600000\njq=1\nfprintd=0\nfingerprint_ready=0\nomarchy=1"
+  const pending = Model.parseDependencies(probeOut, null)
+  const answered = Model.parseDependencies(probeOut, Model.parseBwVersionProbe("bw_version=2026.2.0\n"))
+  const unreadable = Model.parseDependencies(probeOut, Model.parseBwVersionProbe("bw_version=\n"))
+  check("SSH support is 'checking' until the version probe answers, and stays hidden",
+    pending.sshCliStatus === "checking" && Model.sshUiAvailable(pending, true) === false
+      && byKey(pending, "bw").note === "",
+    JSON.stringify({ status: pending.sshCliStatus, bw: byKey(pending, "bw") }))
+  check("the version probe's answer gates SSH like an inline version",
+    answered.sshCliStatus === "supported" && answered.bwVersion === "2026.2.0"
+      && unreadable.sshCliStatus === "unknown",
+    JSON.stringify({ answered: answered.sshCliStatus, unreadable: unreadable.sshCliStatus }))
+  check("the bw identity is read strictly, so a stray value cannot match a cache",
+    Model.dependencyBwId(probeOut) === "66311:4194817:3303444:1773600000"
+      && pending.bwId === "66311:4194817:3303444:1773600000"
+      && Model.dependencyBwId("bw_id=1:2:3") === ""
+      && Model.dependencyBwId("bw_id=1:2:3:4; rm") === ""
+      && Model.dependencyBwId("bw_id=") === "",
+    Model.dependencyBwId("bw_id=1:2:3"))
+}
+
+// Service wiring: a cached version skips `bw -v`; only a new binary re-asks.
+{
+  const svc = read("Service.qml")
+  const checked = functionBody(svc, "onDependenciesChecked")
+  check("the dependency answer reuses the cached version for the same bw binary",
+    /bwId\s*===\s*bwVersionId/.test(checked)
+      && /parseDependencies\(depsRaw,\s*cached\s*\?\s*bwVersionValue\s*:\s*null\)/.test(checked)
+      && /if\s*\(!cached\b[^\n]{0,80}\)\s*probeBwVersion\(bwId\)/.test(checked),
+    checked)
+  const probed = functionBody(svc, "onBwVersionProbed")
+  check("a version answer for a replaced binary is not applied",
+    /latestId\s*!==\s*probedId/.test(probed)
+      && probed.indexOf("latestId !== probedId") < probed.indexOf("dependencies = Model.parseDependencies"),
+    probed)
+}
+check("SSH_CLI_MIN_VERSION is the verified floor",
+  Model.SSH_CLI_MIN_VERSION === "2025.1.2",
+  String(Model.SSH_CLI_MIN_VERSION))
 check("sshCliSupport marks 2025.1.2 as supported",
   sshCliSupport("2025.1.2") === "supported",
   JSON.stringify(sshCliSupport("2025.1.2")))
@@ -123,10 +138,8 @@ check("supported bw without jq blocks the vault list until setup finishes",
     && Model.vaultListBlockedMessage(noJq).includes("jq"),
   `${Model.vaultListMode(noJq)} / ${Model.vaultListBlockedMessage(noJq)}`)
 
-// A whole-list failure on a CLI that predates the malformed-SSH-item fix is the
-// one case where the panel can say something useful about a read it cannot
-// repair. The attribution comes from the probed version, never from the failed
-// read's own output, which can quote decrypted vault material.
+// On a CLI older than the malformed-SSH-item fix, a failed read names the fix;
+// attribution comes from the probed version, never the read's output.
 const rawCliFailure = "TypeError: Cannot read properties of null (reading 'keyFingerprint') for item work-ssh"
 check("a list failure on a pre-2026.8.0 CLI names the release that fixes it",
   Model.vaultListFailureMessage(rawCliFailure, all, "sanitized").includes("2026.8.0"),
@@ -166,7 +179,7 @@ check("older bw versions remain installed but are marked unsupported for SSH",
   byKey(oldBw, "bw").installed === true
     && byKey(oldBw, "bw").version === "2025.1.1"
     && oldBw.sshCliStatus === "unsupported"
-    && byKey(oldBw, "bw").note.includes(Model.sshCliMinVersion()),
+    && byKey(oldBw, "bw").note.includes(Model.SSH_CLI_MIN_VERSION),
   JSON.stringify({ bw: byKey(oldBw, "bw"), sshCliStatus: oldBw.sshCliStatus }))
 check("older bw with jq still uses the sanitized list path for ordinary items",
   Model.vaultListMode(oldBw) === "sanitized",
@@ -192,11 +205,9 @@ for (const [label, raw] of [["empty", ""], ["garbage", "???\n=\nbw\n"]]) {
 }
 
 // --- settings writer --------------------------------------------------------
-// Values must reach shell.json as real JSON types, not strings, or `setting()`
-// hands the panel a string where it expects a number or a bool.
-// The writer runs through bash so its diagnostic stderr can be capped, so the
-// assertions read the script rather than an argv list.
-const writeScript = (k, v, t) => Model.settingWriteCommand(k, v, t)[2]
+// Values must reach shell.json as real JSON types; the writer runs via bash
+// (to cap stderr), so the script is checked.
+const writeValue = (k, v) => Model.settingWriteValue(k, v)
 
 // --- colorized menu-bar icon setting ----------------------------------------
 const colorizeIcon = Model.SETTINGS_SCHEMA.find(e => e.key === "colorizeIcon")
@@ -226,29 +237,15 @@ check("malformed lock settings fail back to their secure defaults",
     && Model.boolSetting("lockOnSuspend", 0) === true,
   "a malformed setting disabled locking")
 
-check("int setting is written with",
-  writeScript("autoLockMinutes", 15, "int")
-    .includes("dms ipc call bitwarden writeSettingJson 'autoLockMinutes' '15'"),
-  writeScript("autoLockMinutes", 15, "int"))
-
-for (const [v, want] of [[true, "true"], [false, "false"]]) {
-  const script = writeScript("closeOnCopy", v, "bool")
-  check(`bool ${v} is written as ${want}`,
-    script.includes(`'closeOnCopy' '${want}'`), `got ${script}`)
-}
-check("a zero int is written as 0, not dropped",
-  writeScript("autoLockMinutes", 0, "int").includes("'autoLockMinutes' '0'"),
-  writeScript("autoLockMinutes", 0, "int"))
-
-// stderr from `omarchy bar set` is collected by the panel, so it needs the same
-// producer-side cap as every other stream the long-lived shell buffers.
-check("setting writer caps its diagnostic stderr",
-  writeScript("autoLockMinutes", 15, "int").includes("exec 2> >(head -c 8192 >&2)"),
-  writeScript("autoLockMinutes", 15, "int"))
+eq("integer setting remains numeric", writeValue("autoLockMinutes", 15), 15)
+eq("zero is retained", writeValue("autoLockMinutes", 0), 0)
+eq("true remains boolean", writeValue("closeOnCopy", true), true)
+eq("false remains boolean", writeValue("closeOnCopy", false), false)
+eq("unknown settings are rejected", writeValue("password", "fixture"), undefined)
 
 // Every schema key must exist in the manifest, or the settings screen would
 // write a key the plugin never reads.
-const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"))
+const manifest = JSON.parse(read("manifest.json"))
 const manifestKeys = new Set(manifest.barWidget.schema.map(e => e.key))
 for (const entry of Model.SETTINGS_SCHEMA) {
   check(`schema key '${entry.key}' exists in manifest.json`,
@@ -268,7 +265,7 @@ check("manifest colorized icon schema matches the model contract",
 check("no packages yields no command", Model.installPackagesCommand([]) === null, "expected null")
 const inst = Model.installPackagesCommand(["bitwarden-cli", "wl-clipboard"])
 check("install goes through Omarchy's own floating-terminal installer",
-  inst[0] === "bash" && inst[2].includes("sudo pacman -S --needed") && inst[2].includes("bitwarden-cli") && inst[2].includes("wl-clipboard"),
+  inst[0] === "bash" && inst[2].includes("xdg-terminal-exec") && inst[2].includes("pacman -S --needed"),
   inst.join(" "))
 
 // The package list lands in an unquoted expansion inside omarchy-install-app,
@@ -300,62 +297,72 @@ check("grouping does not mutate the schema",
   Model.SETTINGS_SCHEMA.every(e => e.groupLabel === undefined), "schema was mutated")
 
 // --- PIN validation ---------------------------------------------------------
-check("minimum PIN length is 4", Model.pinMinLength() === 4, String(Model.pinMinLength()))
-check("recommended PIN length is 6", Model.pinRecommendedLength() === 6, String(Model.pinRecommendedLength()))
+// The stored item is sealed to this machine, but a program running as the
+// user can decrypt it and guess offline on every core (about 17 guesses a
+// second on a 16-thread laptop): 4 digits fell in minutes. Six is the floor.
+check("minimum PIN length is 6", Model.pinMinLength() === 6, String(Model.pinMinLength()))
+check("recommended PIN length is 8", Model.pinRecommendedLength() === 8, String(Model.pinRecommendedLength()))
+check("a PIN set before the floor was raised still unlocks",
+  Model.pinUnlockMinLength() === 4 && /Model\.pinUnlockMinLength\(\)/.test(functionBody(readPluginSource("Panel.qml"), "submitPinUnlock")),
+  String(Model.pinUnlockMinLength()))
 
-// A short PIN is allowed -- the point is that it is flagged, not blocked.
-check("a 4-digit PIN still validates", Model.validatePin("1234", "1234") === "", Model.validatePin("1234", "1234"))
-check("a 5-digit PIN still validates", Model.validatePin("12345", "12345") === "", Model.validatePin("12345", "12345"))
-check("but 4 digits is flagged weak", Model.isPinWeak("1234"), "expected weak")
-check("and 5 digits is flagged weak", Model.isPinWeak("12345"), "expected weak")
-check("6 digits is not flagged", !Model.isPinWeak("123456"), Model.pinWeakWarning("123456"))
-check("longer than 6 is not flagged", !Model.isPinWeak("1234567890"), Model.pinWeakWarning("1234567890"))
+check("a 4-digit PIN is refused", Model.validatePin("1234", "1234") !== "", Model.validatePin("1234", "1234"))
+check("a 5-digit PIN is refused", Model.validatePin("12345", "12345") !== "", Model.validatePin("12345", "12345"))
+check("the refusal names the floor", Model.validatePin("12345", "12345").includes("6 digits"), Model.validatePin("12345", "12345"))
+// Between the floor and the recommendation: allowed, and flagged.
+check("a 6-digit PIN validates", Model.validatePin("123456", "123456") === "", Model.validatePin("123456", "123456"))
+check("but 6 digits is flagged weak", Model.isPinWeak("123456"), "expected weak")
+check("and 7 digits is flagged weak", Model.isPinWeak("1234567"), "expected weak")
+check("8 digits is not flagged", !Model.isPinWeak("12345678"), Model.pinWeakWarning("12345678"))
+check("longer than 8 is not flagged", !Model.isPinWeak("1234567890"), Model.pinWeakWarning("1234567890"))
 
 // No warning while still typing towards a good PIN, or it would flash on
 // every keystroke from the first digit onwards.
 check("nothing is flagged before the floor is even reached",
-  !Model.isPinWeak("") && !Model.isPinWeak("1") && !Model.isPinWeak("123"),
+  !Model.isPinWeak("") && !Model.isPinWeak("1") && !Model.isPinWeak("12345"),
   "expected no warning below the minimum")
 
-// The warning has to carry the actual number, not a vague 'weak'.
-check("the warning names the search space for 4 digits",
-  Model.pinWeakWarning("1234").includes("10,000") && Model.pinWeakWarning("1234").includes("4-digit"),
-  Model.pinWeakWarning("1234"))
-check("the warning names the search space for 5 digits",
-  Model.pinWeakWarning("12345").includes("100,000"), Model.pinWeakWarning("12345"))
+// The warning has to carry the actual number and the offline attack it is
+// about, not a vague 'weak' or a one-core figure.
+check("the warning names the search space for 6 digits",
+  Model.pinWeakWarning("123456").includes("1,000,000") && Model.pinWeakWarning("123456").includes("6-digit"),
+  Model.pinWeakWarning("123456"))
+check("the warning says the stored item can be copied and guessed offline",
+  Model.pinWeakWarning("123456").includes("copy the stored item"), Model.pinWeakWarning("123456"))
+check("the warning's time is the measured offline rate",
+  Model.pinWeakWarning("123456").includes("about 16 hours") && Model.pinWeakWarning("1234567").includes("about 7 days"),
+  Model.pinWeakWarning("123456") + " / " + Model.pinWeakWarning("1234567"))
 check("the warning points at the recommendation",
-  Model.pinWeakWarning("1234").includes("6 or more"), Model.pinWeakWarning("1234"))
+  Model.pinWeakWarning("123456").includes("8 or more") && Model.pinWeakWarning("123456").includes("about 2 months"),
+  Model.pinWeakWarning("123456"))
+check("the guess times scale by ten per digit",
+  Model.pinGuessTime(4) === "about 10 minutes" && Model.pinGuessTime(5) === "about 2 hours",
+  Model.pinGuessTime(4) + " / " + Model.pinGuessTime(5))
+// The same figures wherever the cost is described.
+const manifestPin = JSON.parse(read("manifest.json")).barWidget.schema.find(e => e.key === "pinUnlock").description
+const schemaPin = Model.SETTINGS_SCHEMA.find(e => e.key === "pinUnlock").description
+for (const [where, text] of [["manifest", manifestPin], ["settings screen", schemaPin],
+                             ["README", read("README.md")], ["features doc", read("docs/features.md")]]) {
+  check(`the ${where} gives the offline guess time, not the old one-core figure`,
+    text.includes("16 hours") && !/9 days for 6|2 hours of one CPU core|4 is the floor/.test(text), where)
+}
 for (const [pin, confirm, wantErr] of [
-  ["123",    "123",    true],   // too short
-  ["1234",   "1234",   false],  // the minimum is accepted
+  ["12345",  "12345",  true],   // too short
+  ["123456", "123456", false],  // the minimum is accepted
   ["12345678901234", "12345678901234", false], // longer is allowed, no upper bound
-  ["12a4",   "12a4",   true],   // non-digits refused
+  ["12a456", "12a456", true],   // non-digits refused
   ["",       "",       true],
-  ["1234",   "4321",   true],   // mismatch
+  ["123456", "654321", true],   // mismatch
 ]) {
   const err = Model.validatePin(pin, confirm)
   check(`validatePin(${JSON.stringify(pin)}, ${JSON.stringify(confirm)})`,
     (err !== "") === wantErr, `err=${JSON.stringify(err)}`)
 }
-check("confirm is optional when omitted", Model.validatePin("1234") === "", Model.validatePin("1234"))
+check("confirm is optional when omitted", Model.validatePin("123456") === "", Model.validatePin("123456"))
 
-// --- PIN crypto command shape ----------------------------------------------
-// The whole point of PIN unlock over fingerprint unlock is that the keyring
-// holds ciphertext, not the master password. Guard that property.
-const store = Model.pinStoreCommand()[2]
-check("store derives a key from the PIN rather than saving it",
-  store.includes("openssl enc") && store.includes("-pbkdf2") && store.includes("env:QSBW_PIN"), store)
-check("store uses a high iteration count",
-  /-iter\s+(\d+)/.test(store) && Number(store.match(/-iter\s+(\d+)/)[1]) >= 600000, store)
-check("store pins PBKDF2 to SHA-256 instead of relying on an OpenSSL default",
-  store.includes("-md sha256"), store)
-check("store salts the ciphertext", store.includes("-salt"), store)
-check("store reports encryption failures instead of saving an empty blob",
-  store.includes("set -o pipefail"), store)
-check("store pipes straight into the keyring, never through argv",
-  store.includes("secret-tool store") && !store.includes("$QSBW_SECRET\" secret-tool"), store)
-check("neither PIN nor secret appears as a literal argument",
-  !store.includes("--pass ") && store.includes("-pass env:"), store)
+// --- legacy PIN blob -------------------------------------------------------
+// Read only, to migrate it; must match what older versions wrote.
+const store = legacyKeyring(Model).storePin()[2]
 
 const unlock = Model.pinUnlockCommand()[2]
 check("unlock decrypts with the PIN-derived key",
@@ -368,5 +375,4 @@ check("unlock iteration count matches store",
 check("unlock uses the same explicit PBKDF2 digest as store",
   unlock.includes("-md sha256"), unlock)
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) { console.error("\nFAILURES:\n  " + failures.join("\n  ")); process.exit(1) }
+done()

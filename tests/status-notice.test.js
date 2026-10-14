@@ -1,21 +1,14 @@
 #!/usr/bin/env node
-// Transient status and error messages float over the panel instead of joining
-// its content column. Their arrival must never change the height used by
-// KeyboardPanel, which is what made every screen jump down and back up.
+// Status and error messages float over the panel, so they never change
+// KeyboardPanel's height (which made screens jump).
 //
 //   node tests/status-notice.test.js
 
-const readEnglishQml = require("./helpers/english-qml.cjs")
-const fs = require("fs")
-const path = require("path")
+const { createSuite, read, readPluginSource } = require("./harness")
 
-const panelSrc = readEnglishQml(path.join(__dirname, "..", "Panel.qml"))
-const noticeSrc = fs.existsSync(path.join(__dirname, "..", "StatusNotice.qml"))
-  ? readEnglishQml(path.join(__dirname, "..", "StatusNotice.qml"))
-  : ""
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
+const panelSrc = readPluginSource("Panel.qml")
+const noticeSrc = read("StatusNotice.qml")
+const { check, done } = createSuite("status-notice")
 
 const noticeAt = panelSrc.indexOf("id: statusNotice")
 const noticeUse = noticeAt === -1 ? "" : panelSrc.slice(noticeAt, noticeAt + 2000)
@@ -57,9 +50,13 @@ check("an error can offer a recovery alongside the dismiss",
     && /signal actionRequested\(\)/.test(noticeSrc)
     && /visible: root\.showsError && root\.actionLabel !== ""/.test(noticeSrc),
   noticeSrc)
-check("the recovery is offered only when there is one",
-  /actionLabel: root\.failedSave \? "Reopen " \+ root\.failedSave\.name : ""/.test(noticeUse),
+check("the recovery is offered only when there is one, and only while unlocked",
+  /actionLabel: root\.status === "unlocked" && root\.failedSave/.test(noticeUse)
+    && /Model\.plainLabel\("Reopen " \+ Model\.clipLabel\(root\.failedSave\.name, 24\)\)/.test(noticeUse),
   noticeUse)
+check("the message column subtracts both trailing buttons",
+  /width: parent\.width - noticeIcon[\s\S]{0,500}noticeActionButton\.visible[\s\S]{0,300}dismissNoticeButton\.visible/.test(noticeSrc),
+  noticeSrc)
 check("dismissing the message discards the recovery with it",
   /root\.failedSave = null\s*\n\s*root\.errorMessage = ""/.test(noticeUse),
   "a Reopen button behind an invisible message is a button for nothing")
@@ -69,8 +66,4 @@ check("dynamic notices expose alert semantics to assistive technology",
     && /Accessible\.name:/.test(noticeSrc),
   noticeSrc)
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) {
-  console.error("\nFAILURES:\n  " + failures.join("\n  "))
-  process.exit(1)
-}
+done()

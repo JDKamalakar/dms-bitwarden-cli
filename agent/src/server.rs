@@ -1,7 +1,7 @@
 //! Bounded Unix-socket client transport for the single-owner state loop.
 
 use crate::peer::PeerContext;
-use crate::protocol::{self, AgentRequest, MAX_FRAME_LEN};
+use crate::protocol::{self, AgentRequest, SessionBinding, MAX_FRAME_LEN};
 use std::sync::Arc;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{UnixListener, UnixStream};
@@ -9,18 +9,25 @@ use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio::time::{timeout, Duration};
 
 pub const MAX_CLIENTS: usize = 8;
-/// Socket read and write timeouts. These are machine-speed operations, so
-/// they stay short regardless of how long a person may take to answer.
+/// Socket I/O timeouts; machine-speed, independent of human answers.
 pub const CLIENT_IO_TIMEOUT: Duration = Duration::from_secs(30);
-/// How long a client blocks waiting for the state loop's answer. It must
-/// exceed `approvals::REQUEST_LIFETIME_MS`, or a client would give up before
-/// the request it is waiting on expires and the human deadline would be
-/// decorative -- which it was when both were thirty seconds.
+/// How long a client waits for the state loop. Must exceed
+/// `approvals::REQUEST_LIFETIME_MS`, or clients would give up first.
 pub const RESPONSE_TIMEOUT: Duration = Duration::from_secs(150);
 const ACCEPT_ERROR_DELAY: Duration = Duration::from_millis(100);
+/// Session binds per connection (OpenSSH's agent limit; one per hop is
+/// normal).
+pub const MAX_SESSION_BINDS: usize = 16;
 
 pub struct ClientEvent {
     pub peer: PeerContext,
+    /// Set once bound for forwarding, or once a bind is refused (it may have
+    /// said forwarding), and never cleared, so the remote end cannot send a
+    /// "not forwarded" bind to undo it.
+    pub forwarded: bool,
+    /// The connection's session binds so far, oldest first: which server a
+    /// login on each bound session goes to.
+    pub binds: Vec<SessionBinding>,
     pub request: AgentRequest,
     pub reply: oneshot::Sender<Vec<u8>>,
 }
@@ -31,11 +38,8 @@ pub async fn run(listener: UnixListener, events: mpsc::Sender<ClientEvent>) {
         let stream = match listener.accept().await {
             Ok((stream, _)) => stream,
             Err(_) => {
-                // accept(2) can surface connection and resource errors which
-                // do not invalidate the listener. There is no portable error
-                // taxonomy that proves this descriptor has become unusable,
-                // so keep serving and pace persistent failures; shutdown
-                // aborts this task with the rest of the companion.
+                // accept(2) errors need not mean the listener is dead: keep
+                // serving and pace repeated failures.
                 tokio::time::sleep(ACCEPT_ERROR_DELAY).await;
                 continue;
             }
@@ -62,11 +66,20 @@ async fn serve_client(mut stream: UnixStream, events: mpsc::Sender<ClientEvent>)
         return;
     };
 
+    let mut forwarded = false;
+    let mut binds = Vec::<SessionBinding>::new();
     loop {
         let Some(frame) = read_frame(&mut stream).await else {
             return;
         };
         let Some(request) = protocol::decode_request(&frame) else {
+            // Fail closed: a bind that does not parse may have been the one
+            // saying this connection relays a remote host, so treat it as
+            // forwarded. Leaving the flag alone let a server with an oversized
+            // host key have its relayed logins answered by a local grant.
+            if protocol::may_be_session_bind(&frame) {
+                forwarded = true;
+            }
             if write_response(&mut stream, protocol::failure_response())
                 .await
                 .is_err()
@@ -75,10 +88,44 @@ async fn serve_client(mut stream: UnixStream, events: mpsc::Sender<ClientEvent>)
             }
             continue;
         };
+        // Connection state; the state loop only sees its effect.
+        if let AgentRequest::SessionBind {
+            forwarding,
+            binding,
+        } = request
+        {
+            let response = if binds.len() < MAX_SESSION_BINDS {
+                binds.push(binding);
+                forwarded |= forwarding;
+                protocol::success_response()
+            } else {
+                // A bind that cannot be recorded is refused like an
+                // unparseable one, and for the same reason marks the
+                // connection forwarded whatever its flag said: later logins
+                // on its session could not be matched to their server.
+                forwarded = true;
+                protocol::failure_response()
+            };
+            if write_response(&mut stream, response).await.is_err() {
+                return;
+            }
+            continue;
+        }
+        // The peer was captured once, at accept. A client may have exec'd
+        // another program since, so a signature is never attributed (or
+        // grant-scoped) to the original executable: re-read it, and drop the
+        // connection if it changed or cannot be read.
+        if matches!(request, AgentRequest::Sign { .. })
+            && !peer.is_unchanged(PeerContext::capture(peer.uid, peer.pid))
+        {
+            return;
+        }
         let (reply, response) = oneshot::channel();
         if events
             .try_send(ClientEvent {
                 peer: peer.clone(),
+                forwarded,
+                binds: binds.clone(),
                 request,
                 reply,
             })
@@ -92,14 +139,10 @@ async fn serve_client(mut stream: UnixStream, events: mpsc::Sender<ClientEvent>)
             }
             continue;
         }
-        // Watch the socket while the request is pending. Awaiting only the
-        // reply would leave a client that walked away undetected until the
-        // deadline -- and a prompt on screen for a signature nobody is
-        // waiting for any more. Returning here drops the reply channel, which
-        // is what tells the state loop to withdraw the request.
-        //
-        // Anything that actually arrives is either EOF or a pipelined frame,
-        // which this protocol does not use; both end the connection.
+        // Watch the socket while pending, so a client that left is noticed
+        // before the deadline; returning drops the reply channel, which
+        // withdraws the request. Anything arriving (EOF or a pipelined frame)
+        // ends the connection.
         let mut probe = [0_u8; 1];
         let bytes = tokio::select! {
             result = timeout(RESPONSE_TIMEOUT, response) => match result {

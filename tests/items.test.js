@@ -1,42 +1,14 @@
 #!/usr/bin/env node
-// The item detail view is built from what `bw list items` already returned
-// rather than from a second `bw get item`. That is only correct if the two
-// produce the same detail, so that equivalence is the property under test.
+// The detail view is built from `bw list items` data rather than `bw get item`,
+// which is only right if both give the same detail.
 //
 //   node tests/items.test.js
 
-const readEnglishQml = require("./helpers/english-qml.cjs")
-const fs = require("fs")
+const { createSuite, functionBody, loadModule, readPluginSource } = require("./harness")
 const path = require("path")
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.parseItems = parseItems
-  exports.parseItemDetail = parseItemDetail
-  exports.itemDetailFromObject = itemDetailFromObject
-  exports.itemTypeGlyph = itemTypeGlyph
-  exports.parseSanitizedItems = parseSanitizedItems
-  exports.filterItems = filterItems
-  exports.buildCreatePayload = buildCreatePayload
-  exports.buildEditPayload = buildEditPayload
-  exports.matchesQuery = matchesQuery
-  exports.createItemCommand = createItemCommand
-  exports.spliceSavedItem = spliceSavedItem
-  exports.optimisticItem = optimisticItem
-  exports.replaceItemById = replaceItemById
-  exports.findItemById = findItemById
-  exports.pendingItemId = pendingItemId
-  exports.isPendingItemId = isPendingItemId
-  exports.savedUnsanitizedMarker = savedUnsanitizedMarker
-  exports.identityFullName = identityFullName
-  exports.getItemCommand = getItemCommand
-  exports.editItemCommand = editItemCommand
-  exports.deleteItemCommand = deleteItemCommand
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (l, ok, d) => ok ? pass++ : failures.push(`${l}\n    ${d}`)
+const { check, done } = createSuite("items")
 
 // Shaped like a real `bw list items` entry, which carries the complete cipher
 // -- this is what makes the second CLI call unnecessary.
@@ -48,7 +20,21 @@ const login = {
     username: "octocat", password: "s3cr3t-p4ss", totp: "JBSWY3DPEHPK3PXP",
     uris: [{ match: null, uri: "https://github.com/login" }]
   },
-  fields: [{ name: "recovery", value: "abcd-efgh", type: 1 }]
+  fields: [
+    { name: "recovery", value: "abcd-efgh", type: 1 },
+    { name: "Account name", value: null, type: 3, linkedId: 100 }
+  ]
+}
+
+const secureNote = {
+  object: "item", id: "44444444-4444-4444-4444-444444444444",
+  type: 2, name: "Operations", notes: "Runbook", favorite: false,
+  secureNote: { type: 0 },
+  fields: [
+    { name: "Region", value: "eu-west", type: 0 },
+    { name: "API key", value: "not-a-real-secret", type: 1 },
+    { name: "Enabled", value: false, type: 2 }
+  ]
 }
 
 const card = {
@@ -87,7 +73,7 @@ check("generic write and private-read commands reject SSH", Model.buildCreatePay
 
 // --- the equivalence the optimisation rests on ------------------------------
 
-for (const raw of [login, card, identity]) {
+for (const raw of [login, secureNote, card, identity]) {
   const viaGetItem = Model.parseItemDetail(JSON.stringify(raw))
   const viaList = Model.itemDetailFromObject(raw)
   check(`${raw.name}: the list-built detail matches the get-item-built detail`,
@@ -97,7 +83,7 @@ for (const raw of [login, card, identity]) {
 
 // --- parseItems keeps what the detail view needs ----------------------------
 
-const listed = Model.parseItems(JSON.stringify([login, card, identity]))
+const listed = Model.parseItems(JSON.stringify([login, secureNote, card, identity]))
 check("every listed item carries its raw object", listed.every(i => i.rawObject), "missing rawObject")
 
 const listedLogin = listed.find(i => i.id === login.id)
@@ -106,10 +92,33 @@ check("the password survives the round trip through the list",
   detail.password === "s3cr3t-p4ss", detail.password)
 check("so does the TOTP key", detail.totpKey === "JBSWY3DPEHPK3PXP", detail.totpKey)
 check("so do custom fields, which the list view itself never shows",
-  detail.fields.length === 1 && detail.fields[0].name === "recovery"
+  detail.fields.length === 2 && detail.fields[0].name === "recovery"
     && detail.fields[0].value === "abcd-efgh", JSON.stringify(detail.fields))
+check("linked custom fields resolve their native value and retain their target id",
+  detail.fields[1].value === "octocat" && detail.fields[1].linkedId === 100,
+  JSON.stringify(detail.fields[1]))
+check("linked secrets stay sensitive in the detail model",
+  Model.itemDetailFromObject({ type: 1, name: "linked", login: { password: "secret" },
+    fields: [{ name: "Password alias", type: 3, linkedId: 101 }] }).fields[0].sensitive === true,
+  JSON.stringify(detail.fields))
+check("the detail says whether there is a password, as the list row does",
+  detail.hasPassword === true
+    && Model.itemDetailFromObject({ type: 1, name: "no password", login: { username: "u" } }).hasPassword === false
+    && Model.itemDetailFromObject({ type: 5, name: "key", sshKey: {} }).hasPassword === false,
+  "hasPassword must be a boolean on every detail")
 check("so do notes", detail.notes === "recovery codes in the safe", detail.notes)
 check("so do URIs", detail.uris[0] === "https://github.com/login", JSON.stringify(detail.uris))
+
+const listedSecureNote = listed.find(i => i.id === secureNote.id)
+const secureNoteDetail = Model.itemDetailFromObject(listedSecureNote.rawObject)
+check("secure-note custom fields survive into the detail model",
+  secureNoteDetail.fields.length === 3
+    && secureNoteDetail.fields[0].name === "Region"
+    && secureNoteDetail.fields[1].type === 1,
+  JSON.stringify(secureNoteDetail.fields))
+check("an explicit false boolean custom field is not erased as empty",
+  secureNoteDetail.fields[2].value === "false",
+  JSON.stringify(secureNoteDetail.fields[2]))
 
 const listedCard = listed.find(i => i.id === card.id)
 const cardDetail = Model.itemDetailFromObject(listedCard.rawObject)
@@ -125,10 +134,8 @@ check("identity fields survive too",
 
 // --- cards and identities are first-class, not decoration --------------------
 //
-// The model parsed both of these long before anything drew them, so these
-// assertions guard the half that was always right as much as the half that
-// was added: what the list shows, what search can find, and above all what
-// survives an edit.
+//
+// What the list shows, what search finds, and what survives an edit.
 
 check("an identity carries the fields Bitwarden actually returns",
   identityDetail.identity.middleName === "Q" && identityDetail.identity.company === "Acme"
@@ -153,6 +160,14 @@ check("a card is not found by the middle of its number",
 check("an identity is found by name", Model.matchesQuery(listedIdentity, "person"), listedIdentity.subtitle)
 check("an identity is found by email", Model.matchesQuery(listedIdentity, "a@example.com"), listedIdentity.subtitle)
 
+// A note behind "ask for the master password" must not be readable by guessing
+// at it in the search box.
+check("a note is found by search", Model.matchesQuery({ name: "n", notes: "needle", reprompt: 0 }, "needle"), "")
+check("a note that asks for the master password is not found by search",
+  !Model.matchesQuery({ name: "n", notes: "needle", reprompt: 1 }, "needle"), "")
+check("a reprompt item is still found by its name",
+  Model.matchesQuery({ name: "needle", notes: "x", reprompt: 1 }, "needle"), "")
+
 // --- payloads ---------------------------------------------------------------
 
 const createdCard = Model.buildCreatePayload(3, "New", "", "", "", "", "", false, null, null, null,
@@ -170,12 +185,8 @@ check("creating an identity emits an identity object",
     && createdIdentity.identity.ssn === "",
   JSON.stringify(createdIdentity))
 
-// The regression that matters most here. The form can rename a card without
-// ever showing its number, and the writers set every key they know -- so an
-// edit that passes no type fields must leave the sub-object entirely alone,
-// not blank it. This is what the `&& typeFields` guard in buildEditPayload is
-// for, and it is worth an assertion because nothing about the call site looks
-// dangerous.
+// A rename passes no type fields and must leave the card untouched (the
+// `&& typeFields` guard in buildEditPayload), not blank it.
 const renamedCard = Model.buildEditPayload({ typeCode: 3, rawObject: card },
   "Renamed", "", "", "", "", "", false, null, null, null)
 check("renaming a card leaves its number, expiry and code untouched",
@@ -200,13 +211,53 @@ check("an edit that does carry card fields writes them",
 check("editing a card never turns it into a login",
   editedCard.type === 3 && editedCard.login === undefined, JSON.stringify(Object.keys(editedCard)))
 
+const createdNoteWithFields = Model.buildCreatePayload(2, "Runbook", "", "", "", "", "", false,
+  null, null, null, null, [
+    { name: "Region", value: "eu-west", type: 0, revealed: true },
+    { name: "API key", value: "secret", type: 1, revealed: true },
+    { name: "Enabled", value: false, type: 2, revealed: true }
+  ])
+check("creating a note writes all editable custom-field types",
+  createdNoteWithFields.fields.length === 3
+    && createdNoteWithFields.fields[0].value === "eu-west"
+    && createdNoteWithFields.fields[1].type === 1
+    && createdNoteWithFields.fields[2].value === "false",
+  JSON.stringify(createdNoteWithFields.fields))
+check("form-only reveal state never enters cipher JSON",
+  createdNoteWithFields.fields.every(field => !("revealed" in field)),
+  JSON.stringify(createdNoteWithFields.fields))
+
+const editedNoteFields = Model.buildEditPayload({ typeCode: 2, rawObject: secureNote },
+  "Operations", "", "", "", "", "Runbook", false, null, null, null, null,
+  [{ name: "Environment", value: "production", type: 0 }])
+check("an edit can add, change, and remove custom fields authoritatively",
+  editedNoteFields.fields.length === 1
+    && editedNoteFields.fields[0].name === "Environment"
+    && editedNoteFields.fields[0].value === "production",
+  JSON.stringify(editedNoteFields.fields))
+
+const unchangedNoteFields = Model.buildEditPayload({ typeCode: 2, rawObject: secureNote },
+  "Operations renamed", "", "", "", "", "Runbook", false, null, null, null, null)
+check("callers that omit custom-field state preserve the original array",
+  JSON.stringify(unchangedNoteFields.fields) === JSON.stringify(secureNote.fields),
+  JSON.stringify(unchangedNoteFields.fields))
+
+const linkedCard = Model.buildCreatePayload(3, "Card", "", "", "", "", "", false,
+  null, null, null, { number: "4111111111111111" },
+  [{ name: "Payment number", value: "must-not-be-copied", type: 3, linkedId: 305 }])
+check("linked fields store an id rather than duplicating the native secret",
+  linkedCard.fields[0].linkedId === 305 && linkedCard.fields[0].value === null,
+  JSON.stringify(linkedCard.fields[0]))
+
+check("a blank custom-field label blocks the save with a useful row number",
+  Model.validateItemForm("Runbook", null, [], [{ name: "Region" }, { name: "   " }])
+    === "Custom field 2 needs a label",
+  Model.validateItemForm("Runbook", null, [], [{ name: "Region" }, { name: "   " }]))
+
 // --- the encoder swap --------------------------------------------------------
 //
-// `bw encode` base64-encodes stdin and does nothing else -- no vault, no
-// session, no network. It cost a full Bitwarden CLI startup, measured at 2.7
-// seconds, on every save, folder creation and Send. coreutils does it in about
-// two milliseconds. These assertions hold the two halves of that swap: the
-// output really is identical, and the payload still never reaches argv.
+// coreutils base64 replaced `bw encode` (~2.7 s of CLI startup per save): the
+// output must be identical and the payload must still stay out of argv.
 
 const { execFileSync } = require("child_process")
 const encodeSamples = [
@@ -240,11 +291,8 @@ for (const [label, cmd] of [
 
 // --- splicing a save into the list ------------------------------------------
 //
-// A save used to be followed by re-listing and re-decrypting the whole vault
-// to learn about the one item just written. The save's own response is the
-// authoritative post-save state, so the list is brought up to date from that.
-// These assertions cover the ways that can go wrong, because a list that
-// quietly disagrees with the vault is worse than a slow one.
+// The list is updated from the save's own response instead of a full reload;
+// these cover the ways that can go wrong.
 
 const envelope = (...objs) => JSON.stringify({
   sshCapability: "unconfirmed", items: objs, sshKeys: []
@@ -330,10 +378,8 @@ check("a failed save is never reported as a success",
 
 // --- saving without making the user wait -------------------------------------
 //
-// A save costs whatever `bw` costs: a second or two of CLI startup, vault
-// decryption and a round trip, none of which this plugin can shorten. So the
-// form closes when the command is launched and the list shows the item as it
-// will be, marked as saving, until the vault answers.
+// The form closes when the save starts and the list shows the item as
+// saving until the vault answers.
 
 const draftCard = { type: 3, name: "Draft Visa", notes: "", favorite: false,
   card: { brand: "Visa", number: "4111111111111111", code: "999",
@@ -407,13 +453,8 @@ check("unparseable JSON still yields null from the string form",
 
 // --- the type glyphs -------------------------------------------------------
 //
-// Pinned by codepoint, because a wrong one is invisible in review: the glyph
-// renders as a small picture in the editor and the name is nowhere in the
-// source. Two of these were wrong for exactly that reason -- Secure Note drew
-// md-fan (a ceiling fan) and Card drew md-close_octagon_outline (a stop sign),
-// both under comments claiming otherwise. The values below are the same ones
-// the type filter chips in Panel.qml use, which is the point: a row and the
-// chip that selects it should not disagree.
+// Pinned by codepoint (a wrong glyph is invisible in review), and the same as
+// the type filter chips in Panel.qml.
 
 const glyphs = [
   [1, 0xF030B, "md-key_variant", "Login"],
@@ -427,19 +468,112 @@ for (const [typeCode, cp, name, label] of glyphs) {
     `U+${got.codePointAt(0).toString(16).toUpperCase()}`)
   check(`${label} is one glyph, not a sequence`, [...got].length === 1, JSON.stringify(got))
 }
-// itemTypeName() already answers "login" for anything it does not recognise,
-// so a cipher type Bitwarden adds later renders as a login rather than as
-// nothing. That also means itemTypeGlyph's own `default:` shield can never be
-// reached -- pinned here so the next reader does not go looking for it.
+// itemTypeName() maps unknown types to "login", so itemTypeGlyph's default
+// shield is unreachable.
 check("an unrecognised type is drawn as a login, not as the unreachable shield",
   Model.itemTypeGlyph(99).codePointAt(0) === 0xF030B,
   Model.itemTypeGlyph(99).codePointAt(0).toString(16))
 
-// A key icon on the password controls, not a refresh icon. Pinned by button
-// rather than by count, because what broke this was a bulk glyph replacement
-// that meant to touch one new button and silently rewrote every other use of
-// the same codepoint. A count alone would have moved with it.
-const panelSrc = readEnglishQml(path.join(__dirname, "..", "Panel.qml"))
+// --- saving an item changes only what the form changed -----------------------
+// Saving used to trim the password (a login with edge spaces stopped working),
+// trim a note's trailing newlines, replace every website with the first one and
+// reset its match rule to the default (which widens browser-extension
+// autofill). An unchanged edit, done the way the panel does it
+// (Service.startEditItem() fills the form from the list row and the detail,
+// saveItemForm() builds the payload), must write back exactly what is stored.
+{
+  const assert = require("assert")
+  const stored = {
+    object: "item", id: "11111111-2222-3333-4444-555555555555", type: 1, name: "Bank",
+    notes: "line1\n\n  indented\n\n", favorite: false, organizationId: null, folderId: null,
+    reprompt: 0, collectionIds: [],
+    login: {
+      username: "me", password: "  hunter2 \t", totp: null,
+      uris: [
+        { match: 3, uri: "https://secure.bank.example/login" },
+        { match: 1, uri: "https://bank-app.example" },
+        { match: null, uri: "androidapp://example.bank" },
+        { match: 4, uri: "^https://(www\\.)?bank\\.example/.*$" }
+      ]
+    }
+  }
+  const row = Model.parseItems([JSON.parse(JSON.stringify(stored))])[0]
+  const detail = Model.itemDetailFromObject(JSON.parse(JSON.stringify(stored)))
+  // startEditItem(): the form fields as the panel fills them.
+  const formPassword = detail.password
+  const formUri = Model.loginUriEntries(row.rawObject.login)[0].uri
+  const payload = Model.buildEditPayload(detail, row.name, row.username, formPassword, row.totpKey,
+    formUri, row.notes, row.favorite, "", "", [], null, undefined)
+  const expected = JSON.parse(JSON.stringify(stored))
+  delete expected.collectionIds // a personal item carries none, as before
+  let same = true
+  try { assert.deepStrictEqual(payload, expected) } catch (e) { same = false }
+  check("an unchanged edit writes the item back byte for byte", same,
+    JSON.stringify(payload))
+  check("an unchanged edit keeps the password's edge spaces",
+    payload.login.password === "  hunter2 \t", JSON.stringify(payload.login.password))
+  check("an unchanged edit keeps a note's trailing newlines",
+    payload.notes === stored.notes, JSON.stringify(payload.notes))
+  check("an unchanged edit keeps every website with its match rule",
+    JSON.stringify(payload.login.uris) === JSON.stringify(stored.login.uris),
+    JSON.stringify(payload.login.uris))
+
+  // A rename is an unchanged edit apart from the name.
+  const renamed = Model.buildEditPayload(detail, "Bank (joint)", row.username, formPassword,
+    row.totpKey, formUri, row.notes, row.favorite, "", "", [], null, undefined)
+  check("a rename changes the name and nothing else",
+    renamed.name === "Bank (joint)" && renamed.login.password === stored.login.password
+      && renamed.notes === stored.notes
+      && JSON.stringify(renamed.login.uris) === JSON.stringify(stored.login.uris),
+    JSON.stringify(renamed))
+
+  // The one website field edits the first website only.
+  const moved = Model.buildEditPayload(detail, row.name, row.username, formPassword, row.totpKey,
+    "https://login.bank.example", row.notes, row.favorite, "", "", [], null, undefined)
+  check("changing the first website keeps its match rule and the other websites",
+    JSON.stringify(moved.login.uris) === JSON.stringify([{ match: 3, uri: "https://login.bank.example" }]
+      .concat(stored.login.uris.slice(1))),
+    JSON.stringify(moved.login.uris))
+  const cleared = Model.buildEditPayload(detail, row.name, row.username, formPassword, row.totpKey,
+    "", row.notes, row.favorite, "", "", [], null, undefined)
+  check("clearing the website field drops only the first website",
+    JSON.stringify(cleared.login.uris) === JSON.stringify(stored.login.uris.slice(1)),
+    JSON.stringify(cleared.login.uris))
+
+  // A changed password is written as typed, edge spaces included.
+  const repassed = Model.buildEditPayload(detail, row.name, row.username, "  new pass  ", row.totpKey,
+    formUri, row.notes, row.favorite, "", "", [], null, undefined)
+  check("a changed password is saved as typed, never trimmed",
+    repassed.login.password === "  new pass  ", JSON.stringify(repassed.login.password))
+
+  // A stored null behind an empty box stays null.
+  const bare = { id: "b", type: 1, name: "Bare", notes: null, login: { username: null, password: null, totp: null, uris: null } }
+  const bareRow = Model.parseItems([bare])[0]
+  const bareSaved = Model.buildEditPayload(Model.itemDetailFromObject(bare), bareRow.name, bareRow.username,
+    "", bareRow.totpKey, "", bareRow.notes, false, "", "", [], null, undefined)
+  check("empty boxes over stored nulls leave the nulls alone",
+    bareSaved.notes === null && bareSaved.login.username === null && bareSaved.login.password === null
+      && bareSaved.login.totp === null && bareSaved.login.uris === null,
+    JSON.stringify(bareSaved))
+
+  // The panel wires it: the form loads the first website exactly as stored.
+  const service = readPluginSource("Panel.qml")
+  const start = functionBody(service, "startEditItemNow")
+  check("the edit form loads the first website exactly as stored",
+    /Model\.loginUriEntries\(/.test(start), start)
+}
+
+// --- a masked value does not give away its length ------------------------------
+// The mask used to repeat one dot per character (up to 16), which showed how
+// long a hidden password, card code or PIN was.
+check("every hidden value is masked to the same length",
+  ["a", "1234", "hunter2", "x".repeat(40)].every(v => Model.maskString(v) === "••••••••"),
+  ["a", "1234", "hunter2"].map(v => Model.maskString(v)).join(" | "))
+check("nothing to hide masks to nothing", Model.maskString("") === "" && Model.maskString(null) === "", "")
+
+// A key icon on the password controls, pinned per button (a bulk glyph
+// replacement once changed them all).
+const panelSrc = readPluginSource("Panel.qml")
 const KEY = String.fromCodePoint(0xF0306)
 const passwordButtons = [
   ['tooltipText: "Password generator (g)"', "the generator button"],
@@ -459,5 +593,4 @@ check("the Generate... button wears it too",
   /text: "Generate\.\.\."[\s\S]{0,80}iconText: "\u{F0306}"/u.test(panelSrc),
   "the field-level generator shortcut")
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) { console.error("\nFAILURES:\n  " + failures.join("\n  ")); process.exit(1) }
+done()

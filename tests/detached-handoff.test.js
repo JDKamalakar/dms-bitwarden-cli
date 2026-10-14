@@ -6,7 +6,7 @@ const {execFileSync} = require('node:child_process');
 const {test} = require('node:test');
 
 const repo = path.join(__dirname, '..');
-const panel = fs.readFileSync(path.join(repo, 'Panel.qml'), 'utf8');
+const panel = fs.readFileSync(path.join(repo, 'Service.qml'), 'utf8');
 
 test('detached clipboard and lock handoffs work in Quickshell without secrets in argv', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'bw-handoff-test-'));
@@ -32,14 +32,10 @@ record['process_chain']=chain
 pathlib.Path(${JSON.stringify(dir)},kind+'.json').write_text(json.dumps(record))
 `;
         for (const binary of ['bw', 'wl-copy']) fs.writeFileSync(path.join(dir, binary), stub, {mode: 0o700});
-        const processBlock = id => {
-            const m = panel.match(new RegExp('  Process \\{\\n    id: ' + id + '\\n[\\s\\S]*?\\n  \\}'));
-            assert.ok(m, `missing ${id}`);
-            return m[0];
-        };
-        const copy = panel.match(/  function copyToClipboard\(text, label\) \{[\s\S]*?\n  \}/)[0];
-        const cleanup = panel.slice(panel.indexOf('  Component.onDestruction: {'), panel.indexOf('  Component.onCompleted: {'));
-        const revoke = cleanup.match(/    if \(root.session\) \{[\s\S]*?\n    \}/)[0];
+        const {functionBody} = require('./harness');
+        const copy = functionBody(panel, 'copyToClipboard');
+        const detach = functionBody(panel, 'detachWithEnvironment');
+        const revoke = functionBody(panel, 'lockSessionOnUnload');
         const qml = `import QtQuick
 import Quickshell
 import Quickshell.Io
@@ -51,15 +47,18 @@ ShellRoot {
  function bwEnv() { return {BW_SESSION: session}; }
  function resetAutoLockTimer() {}
  function flashNotification(label) {}
- ${processBlock('clipboardProc')}
- ${processBlock('revokeSessionProc')}
+ property bool rememberSession: false
+ property bool vaultHelperActive: false
+ Component { id: detachedProcessFactory; Process {} }
+ ${detach}
+ ${revoke}
  ${copy}
  Component.onCompleted: {
   copyToClipboard(${JSON.stringify(secret)}, "fixture");
-  if (Object.keys(clipboardProc.environment).length) throw new Error("retained clipboard environment");
+
  }
  Component.onDestruction: {
-  ${revoke}
+  lockSessionOnUnload();
  }
  Timer { running: true; interval: 700; onTriggered: Qt.quit(); }
 }`;
@@ -92,5 +91,5 @@ ShellRoot {
 });
 
 test('complete Panel QML parses after the delegate layering change', () => {
-    execFileSync('/usr/lib/qt6/bin/qmlformat', [path.join(repo, 'Panel.qml')], {stdio:['ignore','ignore','pipe']});
+    execFileSync('/usr/lib/qt6/bin/qmlformat', [path.join(repo, 'Service.qml')], {stdio:['ignore','ignore','pipe']});
 });

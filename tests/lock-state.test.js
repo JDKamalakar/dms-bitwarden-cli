@@ -1,62 +1,26 @@
 #!/usr/bin/env node
-// What the panel must stop doing when the vault is not open.
+// What must stop when the vault is not open:
 //
-// Three ways it kept going anyway, all of them silent:
-//
-// 1. The auto-lock countdown ran on a Qt Timer, and Qt schedules on
-//    CLOCK_MONOTONIC, which Linux stops while the machine is suspended. A
-//    fifteen-minute lock armed just before the lid closed still had fifteen
-//    minutes left when the lid opened, so a vault left overnight came back
-//    open. The deadline is now kept in wall-clock terms as well.
-//
-// 2. The minute count behind that countdown came out of shell.json, and
-//    nothing validates shell.json. A non-numeric value reached QML as NaN and
-//    landed in an `int` property as 0, which is how "never lock" is spelled; a
-//    value past the schema's ceiling overflowed Timer.interval into a negative
-//    number, which never fires. Both readings were a vault that never locked.
-//
-// 3. Nothing cancels a `bw` that is already running, so a `bw list items`
-//    started a second before the lock finished afterwards and put the whole
-//    vault -- passwords and all -- back into a panel that had just dropped it.
+// 1. The auto-lock also runs on the wall clock (Qt Timers pause in suspend).
+// 2. Minute counts from shell.json are validated (NaN reads as 0 = never, and
+//    oversized values overflow Timer.interval).
+// 3. A `bw` read that finishes after a lock is discarded.
 //
 //   node tests/lock-state.test.js
 
-const fs = require("fs")
-const path = require("path")
+const { createSuite, functionBody, loadModule, read, readPluginSource } = require("./harness")
 
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(__dirname, "..", "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.intSetting = intSetting
-  exports.settingSchemaEntry = settingSchemaEntry
-  exports.SETTINGS_SCHEMA = SETTINGS_SCHEMA
-  exports.autoLockExpired = autoLockExpired
-  exports.autoLockPollMs = autoLockPollMs
-  exports.vaultReadIsStale = vaultReadIsStale
-  exports.parseItems = parseItems
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (l, ok, d) => ok ? pass++ : failures.push(`${l}\n    ${d}`)
+const { check, done } = createSuite("lock-state")
 
-const panelSrc = fs.readFileSync(path.join(__dirname, "..", "Panel.qml"), "utf8")
-const bodyOf = (name) => {
-  const start = panelSrc.indexOf(`function ${name}(`)
-  if (start === -1) return ""
-  let depth = 0
-  for (let i = panelSrc.indexOf("{", start); i < panelSrc.length; i++) {
-    if (panelSrc[i] === "{") depth++
-    else if (panelSrc[i] === "}" && --depth === 0) return panelSrc.slice(start, i + 1)
-  }
-  return ""
-}
+const panelSrc = readPluginSource("Panel.qml")
+const bodyOf = name => functionBody(panelSrc, name)
 
 // --- 1. The schema is the same on both sides of shell.json ------------------
-// The settings screen clamps to SETTINGS_SCHEMA on the way out and the
-// marketplace shows manifest.json's min/max, so the two have to agree or the
-// clamp on the way back in enforces a range nobody was shown.
-const manifest = JSON.parse(fs.readFileSync(path.join(__dirname, "..", "manifest.json"), "utf8"))
+// The settings screen clamps to SETTINGS_SCHEMA and the marketplace shows
+// manifest.json's min/max: they must agree.
+const manifest = JSON.parse(read("manifest.json"))
 const manifestEntries = {}
 for (const e of manifest.barWidget.schema) manifestEntries[e.key] = e
 
@@ -80,9 +44,7 @@ for (const entry of Model.SETTINGS_SCHEMA) {
 }
 
 // --- 2. Reading a setting back out of shell.json ----------------------------
-// `omarchy bar set` writes whatever it is handed -- a bare word becomes a JSON
-// string, --json stores any number at all -- and the README documents editing
-// the file by hand, so every one of these is reachable.
+// Every one of these can reach shell.json (`omarchy bar set`, hand edits).
 for (const [key, raw, want, why] of [
   ["autoLockMinutes", 15,        15,   "an ordinary value is untouched"],
   ["autoLockMinutes", "30",      30,   "the string form `omarchy bar set` writes without --json"],
@@ -94,10 +56,7 @@ for (const [key, raw, want, why] of [
   ["autoLockMinutes", true,      15,   "a boolean falls back to the default"],
   ["autoLockMinutes", 999999,    1440, "a count that would overflow Timer.interval is capped"],
   ["autoLockMinutes", 1e30,      1440, "so is one written in exponential notation"],
-  // The floor of every integer setting here doubles as its "off" sentinel, so
-  // clamping a negative up to it is the silent never-lock this clamp exists to
-  // refuse, reached from the other side. Below the range is a bad value, not a
-  // request for zero.
+  // The floor means "off", so below it is a bad value (default), not zero.
   ["autoLockMinutes", -5,        15,   "a negative count is the default, NOT 0/never"],
   ["autoLockMinutes", "-1",      15,   "including the string form"],
   ["autoLockMinutes", -Infinity, 15,   "and the one that arrives as -Infinity"],
@@ -264,7 +223,8 @@ for (const [name, starter, handler] of [
   ["folderCreate", "submitNewFolder",    "onFolderCreated"],
   ["sync",        "syncVault",          "onSyncFinished"],
   ["itemSave",    "saveItemForm",       "onSaveItemFinished"],
-  ["itemDelete",  "deleteCurrentItem",  "onDeleteItemFinished"],
+  // The delete itself, once any master password re-prompt has passed.
+  ["itemDelete",  "deleteCurrentItemNow", "onDeleteItemFinished"],
   ["attachment",  "pumpAttachmentQueue", "onAttachmentDownloaded"],
 ]) {
   check(`${starter}() stamps the vault operation`,
@@ -273,7 +233,9 @@ for (const [name, starter, handler] of [
     new RegExp(`if \\(vaultReadIsStale\\("${name}"\\)\\)[\\s\\S]{0,140}return`).test(bodyOf(handler)), bodyOf(handler))
 }
 
-const droppedState = bodyOf("dropVaultState")
+const droppedState = bodyOf("dropVaultState") + bodyOf("resetItemForm")
+check("the local vault purge resets the item form",
+  /resetItemForm\(\)/.test(bodyOf("dropVaultState")), bodyOf("dropVaultState"))
 check("a queued TOTP request is pinned to the vault generation that queued it",
   /totpQueuedEpoch\s*=\s*vaultEpoch/.test(bodyOf("fetchTotp"))
     && /queuedEpoch\s*===\s*root\.vaultEpoch/.test(bodyOf("continueTotpQueue")),
@@ -281,7 +243,7 @@ check("a queued TOTP request is pinned to the vault generation that queued it",
 check("every status request records the current vault generation",
   /beginEpochOperation\("status"\)/.test(bodyOf("runStatusCheck")), bodyOf("runStatusCheck"))
 check("status completion refuses a result from an earlier vault generation",
-  /if \(epochOperationIsStale\("status"\)\) return/.test(bodyOf("onStatusFinished")),
+  /if \(epochOperationIsStale\("status"\)\) \{\s*restartStaleStatusProbe\(\)\s*return\s*\}/.test(bodyOf("onStatusFinished")),
   bodyOf("onStatusFinished"))
 check("status requests use the generation-stamped launcher",
   (panelSrc.match(/statusProc\.running\s*=\s*true/g) || []).length === 1
@@ -289,15 +251,15 @@ check("status requests use the generation-stamped launcher",
   `direct starts: ${(panelSrc.match(/statusProc\.running\s*=\s*true/g) || []).length}`)
 check("session handoff reads record and verify their vault generation",
   /beginEpochOperation\("sessionHandoff"\)/.test(bodyOf("refreshStatus"))
-    && /if \(epochOperationIsStale\("sessionHandoff"\)\) return/.test(bodyOf("onSessionHandoff")),
+    && /if \(epochOperationIsStale\("sessionHandoff"\)\) \{\s*restartStaleStatusProbe\(\)\s*return\s*\}/.test(bodyOf("onSessionHandoff")),
   bodyOf("refreshStatus") + "\n" + bodyOf("onSessionHandoff"))
 check("remembered-session lookups record and verify their vault generation",
   /beginEpochOperation\("keyringLookup"\)/.test(bodyOf("onSessionHandoff"))
-    && /if \(epochOperationIsStale\("keyringLookup"\)\) return/.test(bodyOf("onKeyringLookupFinished")),
+    && /if \(epochOperationIsStale\("keyringLookup"\)\) \{\s*restartStaleStatusProbe\(\)\s*return\s*\}/.test(bodyOf("onKeyringLookupFinished")),
   bodyOf("onSessionHandoff") + "\n" + bodyOf("onKeyringLookupFinished"))
 check("logout closes any terminal handoff acceptance window",
   /terminalLoginStartedAt\s*=\s*0/.test(bodyOf("logoutAccount")), bodyOf("logoutAccount"))
-const abandonedAuth = bodyOf("abandonAuthSecrets")
+const abandonedAuth = bodyOf("abandonAuthSecrets") + bodyOf("clearLoginAttempt")
 check("abandoning authentication clears every typed or staged auth secret",
   ["masterPassword", "loginPassword", "loginClientId", "loginClientSecret", "login2faCode",
     "pendingUnlockPassword", "authPasswordWriteValue", "pinEntry"].every(prop =>
@@ -305,9 +267,12 @@ check("abandoning authentication clears every typed or staged auth secret",
   abandonedAuth)
 check("handoff, external unlock, and panel hide purge abandoned auth secrets",
   /cancelAuthPrewarm\(\)[\s\S]{0,100}abandonAuthSecrets\(\)/.test(bodyOf("onSessionHandoff"))
-    && /if\s*\(st\.unlocked\)[\s\S]{0,120}abandonAuthSecrets\(\)/.test(bodyOf("onStatusFinished"))
-    && /onOpenedChanged:[\s\S]{0,180}else[\s\S]{0,120}abandonAuthSecrets\(\)/.test(panelSrc),
+    && /if\s*\(st\.unlocked\)[\s\S]{0,400}abandonAuthSecrets\(\)/.test(bodyOf("onStatusFinished"))
+    && /onOpenedChanged:[\s\S]{0,180}else[\s\S]{0,500}abandonAuthSecrets\(\)/.test(panelSrc),
   bodyOf("onSessionHandoff") + "\n" + bodyOf("onStatusFinished"))
+check("an unlock from elsewhere takes down a waiting reader or key",
+  /if\s*\(st\.unlocked\)[\s\S]{0,400}cancelFingerprintUnlock\(\)[\s\S]{0,120}cancelFidoUnlock\(\)/.test(bodyOf("onStatusFinished")),
+  "a gate armed for a vault someone else unlocked leaves a device waiting on a touch")
 check("closing the panel invalidates PIN and fingerprint unlock completions",
   /abandonAuthSecrets\(\)/.test(bodyOf("close"))
     && /pinUnlockSubmitted\s*=\s*false/.test(abandonedAuth)
@@ -318,8 +283,8 @@ check("closing the panel cancels authentication-method setup writes",
 check("leaving either authentication setup form cancels its in-flight write",
   /currentScreen\s*!==\s*"pin"[\s\S]*abandonPinSetup\(\)/.test(panelSrc)
     && /currentScreen\s*!==\s*"fingerprint"[\s\S]*abandonFingerprintSetup\(\)/.test(panelSrc)
-    && /invalidateEpochOperation\("pinStore"\)/.test(bodyOf("abandonPinSetup"))
-    && /invalidateEpochOperation\("masterStore"\)/.test(bodyOf("abandonFingerprintSetup")),
+    && /invalidateEpochOperation\("pinAdd"\)/.test(bodyOf("abandonPinSetup"))
+    && /invalidateEpochOperation\("fingerprintAdd"\)/.test(bodyOf("abandonFingerprintSetup")),
   bodyOf("abandonPinSetup") + "\n" + bodyOf("abandonFingerprintSetup"))
 check("PIN completion requires a still-active submitted unlock",
   /pinUnlockSubmitted\s*&&\s*sshAuthSurfaceActive\s*&&\s*status\s*===\s*"locked"/.test(bodyOf("onPinUnlockResult")),
@@ -332,25 +297,45 @@ check("fingerprint password retrieval requires a live verified attempt",
 check("remembered-session stores are generation-stamped and stale stores are cleared",
   /beginEpochOperation\("sessionStore"\)/.test(bodyOf("storeCurrentSession"))
     && /epochOperationIsStale\("sessionStore"\)/.test(bodyOf("onSessionStored"))
-    && /requestSessionCredentialClear\(\)/.test(bodyOf("onSessionStored")),
+    // The account it was written for, which a switch may have left.
+    && /requestSessionCredentialClear\(sessionStoreSlot\)/.test(bodyOf("onSessionStored"))
+    && /sessionStoreSlot = activeSlot/.test(bodyOf("storeCurrentSession")),
   bodyOf("storeCurrentSession") + "\n" + bodyOf("onSessionStored"))
 check("a newer session waits for an old store and its cleanup before being remembered",
   /keyringStoreProc\.running\s*\|\|\s*keyringClearProc\.running/.test(bodyOf("storeCurrentSession"))
     && /sessionStorePending\s*=\s*true/.test(bodyOf("storeCurrentSession"))
     && /sessionStorePending\s*=\s*rememberSession\s*&&\s*status\s*===\s*"unlocked"\s*&&\s*!!session/.test(bodyOf("onSessionStored"))
-    && /sessionStorePending[\s\S]{0,100}storeCurrentSession/.test(panelSrc.slice(
-      panelSrc.indexOf("id: keyringClearProc"), panelSrc.indexOf("id: listFoldersProc"))),
+    // Asked again by a timer, not the clear's exit handler: a Process can
+    // still read as running inside its own exit handler.
+    && /if \(sessionStorePending\) storeCurrentSession\(\)/.test(bodyOf("pumpSessionKeyring"))
+    && /id: busyRetryTimer[\s\S]{0,400}root\.sessionStorePending[\s\S]{0,200}root\.pumpSessionKeyring\(\)/.test(panelSrc),
   bodyOf("storeCurrentSession") + "\n" + bodyOf("onSessionStored"))
-check("PIN stores cannot recreate a credential after the vault generation changes",
-  /beginEpochOperation\("pinStore"\)/.test(bodyOf("submitPinSetup"))
-    && /epochOperationIsStale\("pinStore"\)/.test(bodyOf("onPinStored"))
-    && /requestPinCredentialClear\(\)/.test(bodyOf("onPinStored")),
-  bodyOf("submitPinSetup") + "\n" + bodyOf("onPinStored"))
-check("master-password stores cannot recreate a credential after lock or logout",
-  /beginEpochOperation\("masterStore"\)/.test(bodyOf("submitFingerprintSetup"))
-    && /epochOperationIsStale\("masterStore"\)/.test(bodyOf("onMasterPasswordStored"))
-    && /requestMasterCredentialClear\(\)/.test(bodyOf("onMasterPasswordStored")),
-  bodyOf("submitFingerprintSetup") + "\n" + bodyOf("onMasterPasswordStored"))
+// A PIN is now a wrap in the envelope, and the invariant carries over: a wrap
+// written for a vault generation that has ended, or a form that was left, is
+// taken back out when it lands.
+check("a PIN wrap cannot outlive the lock or abandonment it raced",
+  /beginEpochOperation\("pinAdd"\)/.test(bodyOf("submitPinSetup"))
+    && /epochOperationIsStale\("pinAdd"\)[\s\S]{0,300}?removeQuickUnlockMethod\(\{ kind: "remove", method: "pin" \}\)/
+      .test(bodyOf("submitPinSetup")),
+  bodyOf("submitPinSetup"))
+// A fingerprint wrap written for a vault generation that ended (or an
+// abandoned setup) is removed again.
+check("a fingerprint wrap cannot outlive the lock or abandonment it raced",
+  /beginEpochOperation\("fingerprintAdd"\)/.test(bodyOf("submitFingerprintSetup"))
+    && /epochOperationIsStale\("fingerprintAdd"\)[\s\S]{0,300}?removeQuickUnlockMethod\(\{ kind: "remove", method: "fingerprint" \}\)/
+      .test(bodyOf("submitFingerprintSetup")),
+  bodyOf("submitFingerprintSetup"))
+// And logout: the queue is emptied, and the final clear waits for a write
+// already running rather than racing it.
+check("logout drops queued envelope work and waits for a running write",
+  /dropEnvelopeState\(\)/.test(bodyOf("forgetStoredCredentials"))
+    && /envelopeJobs = \[\]/.test(bodyOf("dropEnvelopeState"))
+    && /envelopeProc\.running/.test(bodyOf("credentialStoresRunning")),
+  bodyOf("credentialStoresRunning"))
+check("an envelope job that finishes after logout starts no follow-up",
+  /var accepting = job && !logoutPending/.test(bodyOf("onEnvelopeJobExited"))
+    && /if \(!root\.logoutPending\) root\.refreshEnvelope\(\)/.test(bodyOf("queueQuickUnlockPurge")),
+  bodyOf("onEnvelopeJobExited"))
 check("a learned-association read cannot repopulate account metadata after logout",
   /associationsReadEpoch\s*=\s*associationsEpoch/.test(bodyOf("loadAssociations"))
     && /associationsReadEpoch\s*!==\s*associationsEpoch/.test(bodyOf("onAssociationsLoaded"))
@@ -392,5 +377,4 @@ for (const fn of ["onUnlockSuccess", "onSessionHandoff", "onKeyringLookupFinishe
     /vaultEpoch \+= 1/.test(bodyOf(fn)), bodyOf(fn))
 }
 
-console.log(`${pass} passed, ${failures.length} failed`)
-if (failures.length) { console.error("\nFAILURES:\n  " + failures.join("\n  ")); process.exit(1) }
+done()

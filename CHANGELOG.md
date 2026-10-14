@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.11.6-dms.1] - 2026-10-14
+
+- Port the security runtime and follow-up fixes through upstream `418f5d3` (1.11.6).
+- Keep the full decrypted vault and session in a hardened helper; default to pinentry for unlock and re-prompt. Never fall back to holding the full vault in DMS.
+- Enforce protected-item re-prompt, bounded clipboard reads, safe 2FA and attachment argument transport, and lossless password/URI edits.
+- Bind SSH grants to signature purpose and server; preserve DMS until-screen-lock grants, including revocation during key loading.
+- Retain DMS IdleService, native popout/buttons, local-only helper builds and German translations. Fields use bounded clipboard handling for Qt 6.12.
+- Build all three helpers with `scripts/build-helpers.sh`; install argon2 and pinentry for quick unlock.
+
+
 ## [1.8.1] - 2026-09-05
 
 ### Added

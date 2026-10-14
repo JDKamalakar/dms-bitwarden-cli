@@ -1,38 +1,20 @@
 #!/usr/bin/env node
-// One `bw list items` read feeds both the panel and the companion. These tests
-// run the real shell pipeline against a fake `bw` and a real FIFO, because the
-// properties that matter are process-boundary properties: what reaches QML's
-// stdout, what reaches the FIFO, and -- above all -- that the optional agent
-// branch can never take the ordinary item list down with it.
+// One `bw list items` feeds both the panel and the companion. Run for real
+// against a fake `bw` and a real FIFO: what reaches QML, what reaches the FIFO,
+// and that the agent branch can never break the item list.
 //
 //   node tests/ssh-agent-pipeline.test.js
+//   node tests/ssh-agent-pipeline.test.js
 
+const { createSuite, loadModule, readPluginSource, repoRoot } = require("./harness")
 const fs = require("fs")
 const os = require("os")
 const path = require("path")
 const { spawnSync, execFileSync } = require("child_process")
 
-const repoRoot = path.join(__dirname, "..")
-const Model = {}
-new Function("exports", fs.readFileSync(path.join(repoRoot, "BitwardenModel.js"), "utf8")
-  .replace(/^\.pragma library\s*$/m, "") + `
-  exports.sanitizedListCommand = sanitizedListCommand
-  exports.sshAgentFifoPath = sshAgentFifoPath
-  exports.loadIdEnvVar = loadIdEnvVar
-  exports.isValidLoadId = isValidLoadId
-  exports.loadIdCommand = loadIdCommand
-  exports.sshAgentLoadBeginLine = sshAgentLoadBeginLine
-  exports.sshAgentLoadEndLine = sshAgentLoadEndLine
-  exports.sshAgentVaultLockedLine = sshAgentVaultLockedLine
-  exports.sshAgentLoggedOutLine = sshAgentLoggedOutLine
-  exports.sshAgentHelloLine = sshAgentHelloLine
-`)(Model)
+const Model = loadModule()
 
-let pass = 0
-const failures = []
-const check = (label, ok, detail) => ok ? pass++ : failures.push(`${label}\n    ${detail}`)
-const eq = (label, actual, expected) =>
-  check(label, actual === expected, `expected ${JSON.stringify(expected)}, got ${JSON.stringify(actual)}`)
+const { check, eq, done, failures } = createSuite("ssh-agent-pipeline")
 
 const PRIVATE_MARKER = "SSH_PRIVATE_MARKER_must_not_reach_QML"
 const REPROMPT_MARKER = "REPROMPT_PRIVATE_MARKER_must_not_reach_the_agent"
@@ -61,6 +43,12 @@ const baseEnv = () => Object.assign({}, process.env, {
 
 const privatePem = "-----BEGIN OPENSSH PRIVATE KEY-----\n" + PRIVATE_MARKER + "\n-----END OPENSSH PRIVATE KEY-----"
 const repromptPem = "-----BEGIN OPENSSH PRIVATE KEY-----\n" + REPROMPT_MARKER + "\n-----END OPENSSH PRIVATE KEY-----"
+
+// The panel sends keys base64-encoded, so a leak check has to look for the
+// encoding as well as the plain marker or it would pass on any leak.
+function carriesKey(text, marker, pem) {
+  return text.indexOf(marker) >= 0 || text.indexOf(Buffer.from(pem).toString("base64")) >= 0
+}
 
 const fixture = [
   { object: "item", id: "login-1", type: 1, name: "Login", login: { username: "u", password: "p" } },
@@ -179,14 +167,20 @@ const payload = JSON.parse(enabled.fifo)
 eq("the FIFO payload carries the matching nonce", payload.loadId, LOAD_ID)
 eq("the FIFO payload carries only eligible keys", payload.items.length, 1)
 eq("the eligible key is the non-reprompt one", payload.items[0].itemId, "ssh-1")
-eq("the eligible key carries its private material", payload.items[0].privateKey, privatePem)
+eq("the eligible key carries its private material, base64-encoded",
+  Buffer.from(payload.items[0].privateKeyB64, "base64").toString("utf8"), privatePem)
+check("the encoded key is canonical standard base64",
+  /^[A-Za-z0-9+\/]+={0,2}$/.test(payload.items[0].privateKeyB64) &&
+    Buffer.from(payload.items[0].privateKeyB64, "base64").toString("base64") === payload.items[0].privateKeyB64,
+  payload.items[0].privateKeyB64)
+check("the old plain-text field is gone", !("privateKey" in payload.items[0]), "privateKey present")
 eq("the eligible key carries its public blob", payload.items[0].publicKey, "ssh-ed25519 AAAAWORK")
 eq("the eligible key carries its fingerprint", payload.items[0].fingerprint, "SHA256:work")
 eq("the eligible key is not marked re-prompt", payload.items[0].requiresReprompt, false)
 
 // Re-prompt private keys never leave the jq stage, so the companion is never
 // asked to hold one -- its own skip rule is the second line, not the first.
-check("no re-prompt private key reaches the FIFO", enabled.fifo.indexOf(REPROMPT_MARKER) < 0, "leaked")
+check("no re-prompt private key reaches the FIFO", !carriesKey(enabled.fifo, REPROMPT_MARKER, repromptPem), "leaked")
 check("no ordinary item reaches the FIFO", enabled.fifo.indexOf("login-1") < 0, "leaked")
 check("no unknown cipher type reaches the FIFO", enabled.fifo.indexOf("UNKNOWN_TYPE_MARKER") < 0, "leaked")
 
@@ -196,7 +190,7 @@ eq("the envelope has exactly loadId and items",
   Object.keys(payload).sort().join(","), "items,loadId")
 eq("each item has exactly the agreed fields",
   Object.keys(payload.items[0]).sort().join(","),
-  "fingerprint,itemId,name,privateKey,publicKey,requiresReprompt")
+  "fingerprint,itemId,name,privateKeyB64,publicKey,requiresReprompt")
 
 // -------------------------------------------------------------------------
 // The optional branch can never break the ordinary list
@@ -220,7 +214,7 @@ eq("each item has exactly the agreed fields",
   eq("a squatted FIFO path still loads the item list", run.status, 0)
   eq("the squatting file is untouched", fs.readFileSync(fifoPath, "utf8"), "not a fifo\n")
   check("no private key was written to the squatting file",
-    fs.readFileSync(fifoPath, "utf8").indexOf(PRIVATE_MARKER) < 0, "leaked")
+    !carriesKey(fs.readFileSync(fifoPath, "utf8"), PRIVATE_MARKER, privatePem), "leaked")
   fs.unlinkSync(fifoPath)
 }
 
@@ -261,19 +255,16 @@ for (const [label, contents] of [
       { [Model.loadIdEnvVar()]: LOAD_ID }, contents))
   check(`${label} fails the whole read`, run.result.status !== 0, `status ${run.result.status}`)
   check(`${label} produces no item list`, run.result.stdout.trim() === "", run.result.stdout.slice(0, 200))
-  check(`${label} publishes no private key`, run.fifo.indexOf(PRIVATE_MARKER) < 0, "leaked")
+  check(`${label} publishes no private key`, !carriesKey(run.fifo, PRIVATE_MARKER, privatePem), "leaked")
   check(`${label} publishes no complete payload`, (() => {
     if (run.fifo.trim() === "") return true
     try { JSON.parse(run.fifo); return false } catch (e) { return true }
   })(), run.fifo.slice(0, 200))
 }
 
-// A `bw` that streams a complete, valid document and *then* exits nonzero is
-// a different shape of failure: the branch has already forwarded well-formed
-// bytes by the time the exit status exists, and no in-stream check could have
-// known. The FIFO is deliberately not the boundary here -- `key_load_end` is.
-// The companion holds every candidate unpublished until that line arrives, and
-// discards it on `failed`, so what matters is that the panel reports failure.
+// A `bw` that streams a valid document and then exits nonzero: the bytes are
+// already forwarded, so `key_load_end` is the boundary (the companion discards
+// the candidate on `failed`); the panel must report failure.
 {
   const run = withFifoReader(() =>
     runPipeline({ agentBranch: true, runtimeDir: runtimeDir },
@@ -282,7 +273,7 @@ for (const [label, contents] of [
   check("a failing bw produces no item list", run.result.stdout.trim() === "", run.result.stdout.slice(0, 200))
   eq("a failed read is framed as a failed load", Model.sshAgentLoadEndLine(7, false),
     JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
-  const panelSrc = fs.readFileSync(path.join(repoRoot, "Panel.qml"), "utf8")
+  const panelSrc = readPluginSource("Panel.qml")
   check("the panel closes every load window with the read's real outcome",
     /endSshAgentLoad\(exitCode === 0\)/.test(panelSrc), "the exit handler does not close the load window")
   check("the panel closes the window on paths that abandon a load",
@@ -314,7 +305,7 @@ for (const [label, contents] of [
   check("a cross-typed item leaks no private key to QML",
     run.result.stdout.indexOf(PRIVATE_MARKER) < 0, "leaked")
   check("a cross-typed item leaks no private key to the FIFO",
-    run.fifo.indexOf(PRIVATE_MARKER) < 0, "leaked")
+    !carriesKey(run.fifo, PRIVATE_MARKER, privatePem), "leaked")
 }
 
 // -------------------------------------------------------------------------
@@ -329,15 +320,15 @@ check("the fan-out pipeline runs under process-group supervision",
 // Control lines that frame a load
 // -------------------------------------------------------------------------
 
-eq("key_load_begin is a versioned v2 line", Model.sshAgentLoadBeginLine(7, LOAD_ID),
+eq("key_load_begin is a versioned v1 line", Model.sshAgentLoadBeginLine(7, LOAD_ID),
   JSON.stringify({ v: 2, type: "key_load_begin", epoch: 7, loadId: LOAD_ID }) + "\n")
 eq("key_load_end reports success", Model.sshAgentLoadEndLine(7, true),
   JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "ok" }) + "\n")
 eq("key_load_end reports failure", Model.sshAgentLoadEndLine(7, false),
   JSON.stringify({ v: 2, type: "key_load_end", epoch: 7, status: "failed" }) + "\n")
-eq("vault_locked is a versioned v2 line", Model.sshAgentVaultLockedLine(7),
+eq("vault_locked is a versioned v1 line", Model.sshAgentVaultLockedLine(7),
   JSON.stringify({ v: 2, type: "vault_locked", epoch: 7 }) + "\n")
-eq("vault_logged_out is a versioned v2 line", Model.sshAgentLoggedOutLine(),
+eq("vault_logged_out is a versioned v1 line", Model.sshAgentLoggedOutLine(),
   JSON.stringify({ v: 2, type: "vault_logged_out" }) + "\n")
 eq("an invalid nonce yields no begin line", Model.sshAgentLoadBeginLine(7, "nope"), "")
 
@@ -352,11 +343,8 @@ for (const line of [Model.sshAgentLoadBeginLine(7, LOAD_ID), Model.sshAgentLoadE
 // The whole data plane, end to end
 // -------------------------------------------------------------------------
 //
-// Everything above tests one boundary at a time. This runs the real thing:
-// the real pipeline writes to the real companion's FIFO, the companion
-// validates and publishes, and the real OpenSSH client lists the key back.
-// It is the only test that would catch the projection and the decoder
-// disagreeing about a field name, because both sides are real here.
+// The real pipeline, companion and OpenSSH client together: the only test
+// that catches the projection and decoder disagreeing on a field.
 const helperBin = path.join(repoRoot, "agent", "target", "debug", "qs-bitwarden-ssh-agent")
 
 function endToEnd(done) {
@@ -468,10 +456,5 @@ function endToEnd(done) {
 
 endToEnd(() => {
   try { fs.rmSync(tempDir, { recursive: true, force: true }) } catch (e) {}
-  if (failures.length) {
-    console.error(`\n${failures.length} failed, ${pass} passed\n`)
-    failures.forEach(f => console.error(`  FAIL ${f}`))
-    process.exit(1)
-  }
-  console.log(`ssh-agent-pipeline: ${pass} passed`)
+  done()
 })

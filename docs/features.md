@@ -16,23 +16,23 @@ Every feature the plugin has, and why each one works the way it does. The
   - **The terminal reopens the panel for you** on success, then closes itself; you only have to dismiss it if something went wrong and there is an error worth reading.
   - Two `bw status` calls used to sit on that path, each around three seconds on a real vault: one in the terminal to decide login-versus-unlock, one in the panel to confirm a key `bw` had just minted. Neither is needed -- the panel already knows which state it is in, and the confirming check now starts only after the item list has been rendered instead of sitting in front of it.
 
-- **PIN Unlock** (opt-in, `pinUnlock`):
-  - Unlock with a numeric PIN instead of typing the master password. **6 digits or more is the recommendation**, 4 is the hard floor, and there is no upper limit. A PIN under 6 digits is accepted but the field turns red and tells you how small the search space you just chose is -- every extra digit multiplies an attacker's work by ten.
-  - Unlike fingerprint unlock, the master password is **not** stored in the clear: it is encrypted with a key derived from your PIN (PBKDF2-SHA256, 600,000 iterations, salted) and only the ciphertext is kept, so reading the keyring alone does not reveal it.
-  - A wrong PIN simply fails to decrypt, so no PIN hash is stored and there is none to attack.
-  - Five wrong attempts removes the stored ciphertext entirely; re-enabling needs the master password again. So does a master password change, which is detected on the first failed unlock.
-
-- **Fingerprint Unlock** (opt-in, `fingerprintUnlock`):
-  - Unlock the vault with an enrolled fingerprint instead of retyping your master password.
-  - Verifies through the same PAM stack as the Omarchy lock screen (`/etc/pam.d/omarchy-lock-fingerprint`), so it works wherever `omarchy setup security fingerprint` has been run.
-  - Enrolling asks for your master password up front in the settings screen, rather than quietly capturing it on some later unlock.
-  - The reader is armed automatically whenever you open the panel on a locked vault; the master password field always stays available as a fallback.
-  - See [Optional: Fingerprint Unlock](../README.md#fingerprint-unlock) for the security trade-off before enabling it.
+- **PIN Unlock** (opt-in, `pinUnlock`): New PINs require at least 6 digits; use
+  8 or more. Quick unlock uses the encrypted, machine-sealed envelope. Upstream
+  estimates about 16 hours for all six-digit guesses or 2 months for eight digits
+  on a 16-thread laptop. Legacy entries migrate when successfully used.
+- **Fingerprint Unlock** (opt-in, `fingerprintUnlock`): Uses the DMS
+  `assets/pam/fprint` configuration and an enrolled finger. The keyring holds an
+  encrypted, machine-sealed envelope. This does not isolate it from malicious
+  programs running as the same user. See the README for prerequisites.
+- **Secret handling:** The separate vault helper holds the full decrypted list;
+  DMS receives redacted metadata. Master-password re-prompt is enforced before
+  protected actions. Revealing/editing deliberately brings selected secrets into
+  the shell, where garbage collection is not secure memory erasure.
 
 - **SSH Agent** (opt-in, `sshAgentEnabled`):
   - Serves the SSH keys in your vault to `ssh`, `git` and `ssh-keygen -Y sign` while the vault is unlocked, from a separate helper process that holds the private keys in memory and drops them on lock, logout, or exit. They are never written to disk and never reach QML.
   - Every signature shows the key, its fingerprint and the program asking. The default prompt lives in the panel; the opt-in centered popup makes the plugin otherwise disappear until a decision is needed. One approval can cover a whole rebase; live approvals are listed and revocable, and repeated unanswered prompts fall back to a cooldown rather than pestering.
-  - **Approve until the screen locks** (`sshAgentApprovalUntilScreenLock`, off by default) replaces the timed program approval with no time expiry. It keeps the same user, executable, key and vault-epoch scope. Screen lock always revokes grants, regardless of **Lock when the screen locks**. Suspend drops them through the vault lock when **Lock when the machine suspends** is on, as before. Grants also end on vault lock, logout, revoke or helper exit. The next signature after unlocking asks again.
+  - **Approve until the screen locks** (`sshAgentApprovalUntilScreenLock`, off by default) replaces the timed program approval with no time expiry. It keeps the same user, executable, key, signature-purpose, bound-server and vault-epoch scope. Screen lock always revokes grants, regardless of **Lock when the screen locks**. Suspend drops them through the vault lock when **Lock when the machine suspends** is on, as before. Grants also end on vault lock, logout, revoke or helper exit. The next signature after unlocking asks again.
   - Public keys are projected to files for Git signing, one file per item, public material only. See [SSH Agent](ssh-agent.md).
 
 - **Context-Aware Password Suggestions (Active Window / Browser Tab)**:

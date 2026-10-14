@@ -9,7 +9,7 @@ const Model = {};
 new Function('exports', fs.readFileSync(path.join(repo, 'BitwardenModel.js'), 'utf8').replace(/^\.pragma library\s*$/m,'') + `
 exports.inspect=sshAgentHelperInspectCommand;
 exports.parse=parseSshAgentHelperInspection;
-exports.candidates=sshAgentHelperCandidates;
+exports.candidates=dir=>helperCandidates(dir,SSH_AGENT_HELPER_SPEC);
 exports.command=sshAgentHelperCommand;
 `)(Model);
 function inspect(dir) {
