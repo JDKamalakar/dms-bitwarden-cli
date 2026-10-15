@@ -80,7 +80,7 @@ for (const file of qmlFiles) {
 // Every QML file that draws vault-derived text, not just the largest one.
 const panel = qmlFiles.map(readPluginSource).join("\n")
 const detailField = read("DetailField.qml")
-for (const binding of ["formFolderLabel()", "formOrgLabel()", "Model.clipLabel(value, 20)",
+for (const binding of ["formFolderLabel()", "formOrgLabel()",
                        'name + " filter (" + shortcut + "): " + value']) {
   const line = panel.split("\n").find(l => l.includes(binding) && /^\s*(text|tooltipText):/.test(l))
   check(`the button label built from ${binding} goes through plainLabel`,

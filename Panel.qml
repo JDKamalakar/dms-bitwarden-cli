@@ -400,27 +400,81 @@ Item {
     }
   }
 
-  // A collapsed vault filter at the foot of the list, showing its name and
-  // value (three "All"s alone would be ambiguous). The value is clipped, since
-  // Ui.Button cannot elide.
-  component VaultFilterButton: Button {
+  component VaultFilterButton: BorderSurface {
+    id: filterButton
+    objectName: "vaultFilter_" + group
     required property string group
     required property string glyph
     required property string name
     required property string value
     required property string shortcut
+    readonly property bool selected: root.vault.openFilterGroup === group
 
-    // Clip, then neutralize (plainLabel may add a <span>).
-    text: Model.plainLabel(name + ": " + Model.clipLabel(value, 20))
-    iconText: root.vault.openFilterGroup === group ? "󰅀" : glyph
-    selected: root.vault.openFilterGroup === group
-    accent: DmsColor.accent
-    fontFamily: root.fontFamily
-    fontSize: Style.font.caption
-    horizontalPadding: Style.space(10)
-    // The full value in the tooltip, neutralized too.
-    tooltipText: Model.plainLabel(name + " filter (" + shortcut + "): " + value)
-    onClicked: root.vault.toggleFilterGroup(group)
+    implicitHeight: Style.space(58)
+    radius: Style.cornerRadius
+    color: selected ? Style.selectedFillFor(root.fg, DmsColor.accent)
+      : Style.normalFillFor(root.fg, DmsColor.accent)
+    borderSpec: Border.controlSpec(selected ? "selected" : "normal", root.fg, DmsColor.accent)
+    activeFocusOnTab: true
+    Accessible.role: Accessible.Button
+    Accessible.name: name + ": " + value
+    Keys.onReturnPressed: root.vault.toggleFilterGroup(group)
+    Keys.onSpacePressed: root.vault.toggleFilterGroup(group)
+
+    RowLayout {
+      anchors.fill: parent
+      anchors.margins: Style.space(10)
+      spacing: Style.space(8)
+      Text {
+        textFormat: Text.PlainText
+        text: filterButton.glyph
+        color: DmsColor.accent
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.body
+      }
+      ColumnLayout {
+        Layout.fillWidth: true
+        spacing: Style.space(2)
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: filterButton.name
+          color: root.dim
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.caption
+          elide: Text.ElideRight
+        }
+        Text {
+          Layout.fillWidth: true
+          textFormat: Text.PlainText
+          text: filterButton.value
+          color: root.fg
+          font.family: root.fontFamily
+          font.pixelSize: Style.font.bodySmall
+          font.bold: true
+          elide: Text.ElideRight
+        }
+      }
+      Text {
+        textFormat: Text.PlainText
+        text: filterButton.selected ? "󰅃" : "󰅀"
+        color: root.dim
+        font.family: root.fontFamily
+        font.pixelSize: Style.font.bodySmall
+      }
+    }
+    MouseArea {
+      id: filterMouse
+      anchors.fill: parent
+      hoverEnabled: true
+      cursorShape: Qt.PointingHandCursor
+      onClicked: root.vault.toggleFilterGroup(filterButton.group)
+    }
+    PanelToolTip {
+      visible: filterMouse.containsMouse
+      text: Model.plainLabel(name + " filter (" + shortcut + "): " + value)
+      fontFamily: root.fontFamily
+    }
   }
 
   Component {
@@ -546,8 +600,8 @@ Item {
         : (root.vault.status === "unauthenticated"
           ? (root.vault.show2faField ? code2faField : emailField)
           : (unlockForm.focusField ? unlockForm.focusField : keyCatcher)))
-    contentWidth: panel.fittedContentWidth(Style.space(450))
-    contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight, Style.space(640) + root.vault.filterDrawerHeight)
+    contentWidth: panel.fittedContentWidth(Style.space(520))
+    contentHeight: panel.fittedContentHeight(mainColumn.implicitHeight, Style.space(720) + root.vault.filterDrawerHeight)
 
     // Our letter shortcuts get the first look: PanelKeyCatcher would consume
     // h/j/k/l (including l, lock) as navigation.
@@ -749,14 +803,15 @@ Item {
         // Header
         // -------------------------------------------------------------------
         PanelHero {
+          objectName: "vaultHeader"
           width: parent.width
           title: "Bitwarden"
+          detail: root.vault.status === "unlocked" ? root.vault.filteredItems.length + Tr.text(" items") : ""
           meta: {
             if (root.vault.status === "unlocked") {
               if (root.vault.isSyncing) return Tr.text("Syncing...")
               if (root.vault.isLoading && root.vault.items.length === 0) return Tr.text("Loading items...")
-              // `bw status` can lag the list; show the count meanwhile.
-              return root.vault.userEmail || (root.vault.filteredItems.length + Tr.text(" items"))
+              return root.vault.userEmail
             }
             if (root.vault.status === "locked") return Tr.text("Vault Locked")
             if (root.vault.status === "checking") return Tr.text("Checking status...")
@@ -764,90 +819,113 @@ Item {
           }
           foreground: root.fg
           fontFamily: root.fontFamily
-
-          iconComponent: Text {
-            textFormat: Text.PlainText
-            text: "󰞀"
-            color: root.barIconColor
-            font.family: root.fontFamily
-            font.pixelSize: Style.font.display
+          iconComponent: Rectangle {
+            width: Style.space(40)
+            height: width
+            radius: Style.cornerRadius
+            color: Util.alpha(DmsColor.accent, 0.16)
+            Text {
+              anchors.centerIn: parent
+              textFormat: Text.PlainText
+              text: "󰞀"
+              color: DmsColor.accent
+              font.family: root.fontFamily
+              font.pixelSize: Style.font.icon
+            }
           }
-
           trailingControl: Row {
-            spacing: Style.space(6)
-
-            // New Item Button
-            PanelActionButton {
-              visible: root.vault.status === "unlocked" && root.vault.activeScreen === "main"
-              iconText: "󰐕"
-              tooltipText: Tr.text("New item (n)")
-              fontFamily: root.fontFamily
-              onClicked: root.vault.startAddNewItem()
-            }
-
-            // Sync Vault Button
-            PanelActionButton {
-              visible: root.vault.status === "unlocked"
-              iconText: "󰑐"
-              tooltipText: root.vault.isSyncing ? Tr.text("Syncing...") : Tr.text("Sync vault (r)")
-              fontFamily: root.fontFamily
-              enabled: !root.vault.isSyncing
-              onClicked: root.vault.syncVault()
-            }
-
-            // Send Button
-            PanelActionButton {
-              visible: root.vault.status === "unlocked" && root.vault.activeScreen !== "sends"
-              iconText: "󰒗"
-              tooltipText: Tr.text("Bitwarden Send (Alt+S)")
-              fontFamily: root.fontFamily
-              onClicked: root.vault.openSends()
-            }
-
-            // Generator Button
-            PanelActionButton {
-              visible: root.vault.status === "unlocked" && root.vault.activeScreen !== "generator"
-              iconText: "󰌆"
-              tooltipText: Tr.text("Password generator (g)")
-              fontFamily: root.fontFamily
-              onClicked: root.vault.openGenerator()
-            }
-
-            // Accounts Button
-            PanelActionButton {
-              visible: root.vault.activeScreen !== "accounts" && root.vault.activeScreen !== "setup"
-                && root.vault.accountsLoaded && (root.vault.accountCount > 1 || root.vault.status !== "unauthenticated")
-              iconText: "󰀉"
-              tooltipText: "Accounts"
-              fontFamily: root.fontFamily
-              onClicked: root.vault.openAccounts()
-            }
-
-            // Settings Button
+            objectName: "vaultHeaderActions"
+            spacing: Style.space(4)
             PanelActionButton {
               visible: root.vault.activeScreen !== "settings" && root.vault.activeScreen !== "setup" && root.vault.activeScreen !== "pin"
+              size: Style.space(32)
               iconText: "󰒓"
               tooltipText: Tr.text("Settings (s)")
               fontFamily: root.fontFamily
               onClicked: root.vault.openSettings()
             }
-
-            // Lock Vault Button
             PanelActionButton {
               visible: root.vault.status === "unlocked"
+              size: Style.space(32)
               iconText: "󰌾"
               tooltipText: Tr.text("Lock vault (l)")
               fontFamily: root.fontFamily
               onClicked: root.vault.lockVault()
             }
-
-            // Close Panel Button
             PanelActionButton {
+              size: Style.space(32)
               iconText: "󰅖"
               tooltipText: Tr.text("Close (Esc)")
               fontFamily: root.fontFamily
               onClicked: root.close()
             }
+          }
+        }
+
+        Flow {
+          objectName: "vaultQuickActions"
+          width: parent.width
+          spacing: Style.space(6)
+          visible: root.vault.status === "unlocked"
+            || (root.vault.activeScreen !== "accounts" && root.vault.activeScreen !== "setup"
+              && root.vault.accountsLoaded && (root.vault.accountCount > 1 || root.vault.status !== "unauthenticated"))
+          Button {
+            visible: root.vault.status === "unlocked" && root.vault.activeScreen === "main"
+            text: Tr.text("New item")
+            iconText: "󰐕"
+            tooltipText: Tr.text("New item (n)")
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.body
+            verticalPadding: Style.space(6)
+            selected: true
+            onClicked: root.vault.startAddNewItem()
+          }
+          Button {
+            visible: root.vault.status === "unlocked"
+            text: Tr.text("Sync")
+            iconText: "󰑐"
+            iconSpinning: root.vault.isSyncing
+            tooltipText: Tr.text("Sync vault (r)")
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.body
+            verticalPadding: Style.space(6)
+            enabled: !root.vault.isSyncing
+            onClicked: root.vault.syncVault()
+          }
+          Button {
+            visible: root.vault.status === "unlocked" && root.vault.activeScreen !== "sends"
+            text: Tr.text("Send")
+            iconText: "󰒗"
+            tooltipText: Tr.text("Bitwarden Send (Alt+S)")
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.body
+            verticalPadding: Style.space(6)
+            onClicked: root.vault.openSends()
+          }
+          Button {
+            visible: root.vault.status === "unlocked" && root.vault.activeScreen !== "generator"
+            text: Tr.text("Generator")
+            iconText: "󰌆"
+            tooltipText: Tr.text("Password generator (g)")
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.body
+            verticalPadding: Style.space(6)
+            onClicked: root.vault.openGenerator()
+          }
+          Button {
+            visible: root.vault.activeScreen !== "accounts" && root.vault.activeScreen !== "setup"
+              && root.vault.accountsLoaded && (root.vault.accountCount > 1 || root.vault.status !== "unauthenticated")
+            text: Tr.text("Accounts")
+            iconText: "󰀉"
+            fontFamily: root.fontFamily
+            fontSize: Style.font.caption
+            iconSize: Style.font.body
+            verticalPadding: Style.space(6)
+            onClicked: root.vault.openAccounts()
           }
         }
 
@@ -3246,8 +3324,9 @@ Item {
 
             LineField {
               id: searchField
+              objectName: "vaultSearchField"
               width: parent.width - (root.vault.searchQuery ? clearSearchBtn.width + Style.space(6) : 0)
-              placeholderText: Tr.text("Search items, usernames, URLs, public keys, fingerprints...")
+              placeholderText: Tr.text("Search vault...")
               // Bound, and never assigned here: an assignment (the old Escape
               // and clear button) broke the binding, so a later clear (panel
               // closed, lock) left the old text in the box.
@@ -3371,15 +3450,16 @@ Item {
 
               delegate: BorderSurface {
                 id: itemRow
+                objectName: "vaultItemRow"
                 required property var modelData
                 required property int index
 
                 readonly property var itemData: modelData
                 readonly property bool isSelected: root.vault.cursorActive && root.vault.selectedIndex === index
-                readonly property bool isHovered: rowMouseArea.containsMouse
+                readonly property bool isHovered: rowHover.hovered
 
                 width: ListView.view.width - root.scrollGutter
-                implicitHeight: Style.space(46)
+                implicitHeight: Style.space(64)
                 radius: Style.cornerRadius
                 color: isSelected
                   ? Style.selectedFillFor(root.fg, DmsColor.accent)
@@ -3387,6 +3467,19 @@ Item {
                 borderSpec: isSelected
                   ? Border.controlSpec("selected", root.fg, DmsColor.accent)
                   : Border.none()
+
+                HoverHandler { id: rowHover }
+                MouseArea {
+                  id: rowMouseArea
+                  anchors.fill: parent
+                  cursorShape: Qt.PointingHandCursor
+                  onClicked: {
+                    root.vault.cursorActive = true
+                    root.vault.openFilterGroup = ""
+                    root.vault.selectedIndex = index
+                    root.vault.openDetail(itemData)
+                  }
+                }
 
                 Row {
                   anchors.fill: parent
@@ -3420,9 +3513,12 @@ Item {
 
                   // Labels (Title + Subtitle + Org Tag)
                   Column {
+                    objectName: "vaultItemLabels"
                     anchors.verticalCenter: parent.verticalCenter
-                    width: parent.width - Style.space(20) - actionButtonsRow.implicitWidth - Style.space(28)
-                    spacing: Style.space(1)
+                    width: Math.max(0, parent.width - Style.space(20)
+                      - (actionButtonsRow.visible ? actionButtonsRow.implicitWidth + Style.space(10) : 0)
+                      - Style.space(18))
+                    spacing: Style.space(4)
 
                     Row {
                       spacing: Style.space(4)
@@ -3436,10 +3532,10 @@ Item {
                         font.pixelSize: Style.font.body
                         font.bold: true
                         elide: Text.ElideRight
-                        width: Math.min(implicitWidth, parent.width
+                        width: Math.max(0, Math.min(implicitWidth, parent.width
                           - (itemData.favorite ? Style.space(16) : 0)
                           - (root.asksMasterPassword(itemData) ? Style.space(18) : 0)
-                          - (itemData.hasAttachments ? Style.space(18) : 0))
+                          - (itemData.hasAttachments ? Style.space(18) : 0)))
                       }
 
                       Text {
@@ -3507,11 +3603,11 @@ Item {
                         font.pixelSize: Style.font.caption
                         elide: Text.ElideRight
                         // Only what it needs, so the folder tag keeps its place.
-                        width: Math.min(implicitWidth,
+                        width: Math.max(0, Math.min(implicitWidth,
                           parent.width
                             - (itemData.organizationId ? Style.space(40) : 0)
                             - (itemData.isSuggested ? Style.space(75) : 0)
-                            - (rowFolderTag.visible ? Style.space(90) : 0))
+                            - (rowFolderTag.visible ? Style.space(90) : 0)))
                       }
 
                       Text {
@@ -3532,11 +3628,14 @@ Item {
                   // Quick Action Buttons
                   Row {
                     id: actionButtonsRow
+                    objectName: "vaultItemActions"
                     anchors.verticalCenter: parent.verticalCenter
-                    spacing: Style.space(4)
+                    spacing: Style.space(2)
                     visible: isSelected || isHovered
 
                     PanelActionButton {
+                      size: Style.space(28)
+                      fontSize: Style.font.body
                       visible: itemData.typeCode !== 5 && itemData.hasPassword
                       iconText: "󰌆"
                       tooltipText: Tr.text("Copy password (Enter / y)")
@@ -3545,6 +3644,8 @@ Item {
                     }
 
                     PanelActionButton {
+                      size: Style.space(28)
+                      fontSize: Style.font.body
                       visible: itemData.typeCode !== 5 && itemData.username !== ""
                       iconText: ""
                       tooltipText: Tr.text("Copy username (u)")
@@ -3553,6 +3654,8 @@ Item {
                     }
 
                     PanelActionButton {
+                      size: Style.space(28)
+                      fontSize: Style.font.body
                       visible: itemData.typeCode !== 5 && itemData.hasTotp
                       iconText: "󰥔"
                       tooltipText: Tr.text("Copy TOTP code (m)")
@@ -3561,6 +3664,8 @@ Item {
                     }
 
                     PanelActionButton {
+                      size: Style.space(28)
+                      fontSize: Style.font.body
                       iconText: "󰏫"
                       tooltipText: itemData.typeCode === 5 ? Tr.text("View public key") : Tr.text("View / Edit item (e)")
                       fontFamily: root.fontFamily
@@ -3568,6 +3673,8 @@ Item {
                     }
 
                     PanelActionButton {
+                      size: Style.space(28)
+                      fontSize: Style.font.body
                       visible: itemData.typeCode !== 5 && itemData.uris && itemData.uris.length > 0
                       iconText: "󰖟"
                       tooltipText: Tr.text("Open URL (w)")
@@ -3577,18 +3684,6 @@ Item {
                   }
                 }
 
-                MouseArea {
-                  id: rowMouseArea
-                  anchors.fill: parent
-                  hoverEnabled: true
-                  cursorShape: Qt.PointingHandCursor
-                  onClicked: {
-                    root.vault.cursorActive = true
-                    root.vault.openFilterGroup = ""
-                    root.vault.selectedIndex = index
-                    root.vault.openDetail(itemData)
-                  }
-                }
               }
             }
 
@@ -3793,20 +3888,14 @@ Item {
             }
           }
 
-          // The three collapsed filter buttons. A Flow, since vault names make
-          // their widths unpredictable and a Row would overflow the panel: one
-          // centred line normally, two when needed. `width` reads implicit
-          // widths only, so it never depends on its own result.
-          Flow {
-            anchors.horizontalCenter: parent.horizontalCenter
-            spacing: Style.space(6)
-            readonly property real naturalWidth: folderFilterButton.implicitWidth
-              + organizationFilterButton.implicitWidth
-              + typeFilterButton.implicitWidth
-              + spacing * 2
-            width: Math.min(parent.width, naturalWidth)
+          RowLayout {
+            objectName: "vaultFilters"
+            width: parent.width
+            spacing: Style.space(8)
 
             VaultFilterButton {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 1
               id: folderFilterButton
               group: "folders"
               glyph: "󰉋"
@@ -3816,6 +3905,8 @@ Item {
             }
 
             VaultFilterButton {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 1
               id: organizationFilterButton
               group: "organizations"
               glyph: "󰦑"
@@ -3825,6 +3916,8 @@ Item {
             }
 
             VaultFilterButton {
+              Layout.fillWidth: true
+              Layout.preferredWidth: 1
               id: typeFilterButton
               group: "types"
               glyph: "󰀻"

@@ -16,7 +16,7 @@ TestCase {
   name: "LineField"
   when: windowShown
   width: 420
-  height: 280
+  height: 480
   visible: true
 
   QtObject {
@@ -69,6 +69,8 @@ TestCase {
   function init() {
     store.value = ""
     plain.text = ""
+    plain.placeholderText = ""
+    secret.placeholderText = ""
     next.text = ""
     searchLike.text = ""
     searchLike.enters = 0
@@ -89,6 +91,35 @@ TestCase {
     nested.focus = false
     edits.clear()
     secretEdits.clear()
+  }
+
+  function visibleHints(item, text) {
+    var result = []
+    for (var child of item.children || []) {
+      if (!child.visible) continue
+      if (child.text === text && child.font !== undefined) result.push(child)
+      result = result.concat(visibleHints(child, text))
+    }
+    return result
+  }
+
+  function test_inline_hint_does_not_float_or_duplicate_data() {
+    for (var field of [plain, secret]) {
+      field.placeholderText = "Inline hint"
+      field.text = ""
+      field.forceActiveFocus()
+      tryVerify(function() { return visibleHints(field, "Inline hint").length === 1 })
+      var hint = visibleHints(field, "Inline hint")[0]
+      var point = hint.mapToItem(field, 0, 0)
+      verify(point.y >= 0 && point.y + hint.height <= field.height,
+        "a hint must stay inside the input while focused")
+      field.text = "fictional-value"
+      tryCompare(field, "text", "fictional-value")
+      compare(visibleHints(field, "Inline hint").length, 0,
+        "a filled input must not repeat its placeholder")
+      field.text = ""
+      tryVerify(function() { return visibleHints(field, "Inline hint").length === 1 })
+    }
   }
 
   function test_login_callers_can_handle_textEdited() {
