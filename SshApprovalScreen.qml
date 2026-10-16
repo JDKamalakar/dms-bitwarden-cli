@@ -229,17 +229,18 @@ Column {
     width: parent.width
   }
 
-  // Deny first, and no bare-Enter default: a stray key must not sign. Every
-  // decision in one row, a column each, like the unlock methods.
-  Row {
+  // Deny first, and no bare-Enter default: a stray key must not sign.
+  // Four choices need two rows to keep long captions readable.
+  Grid {
     id: decisionRow
     width: parent.width
     spacing: Style.space(6)
+    columns: count === 4 ? 2 : count
 
     readonly property bool denyAllOffered: vault.sshPendingCount > 1
     readonly property bool grantOffered: vault.sshPrompt !== null && vault.sshPrompt.grantOffered === true
     readonly property int count: 2 + (denyAllOffered ? 1 : 0) + (grantOffered ? 1 : 0)
-    readonly property real tileWidth: (width - spacing * (count - 1)) / count
+    readonly property real tileWidth: (width - spacing * (columns - 1)) / columns
 
     ChoiceTile {
       id: denyButton
