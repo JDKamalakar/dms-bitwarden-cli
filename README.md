@@ -1,7 +1,8 @@
 # Bitwarden Dankbar
 
 > Version 1.11.6-dms.2: security core ported from upstream 1.11.6. Build all three
-> helpers after updating: `./scripts/build-helpers.sh`. DMS runs only local builds;
+> helpers after updating with [**Build helpers**](docs/vault-helper.md#if-the-helper-is-missing-or-fails)
+> or `./scripts/build-helpers.sh`. DMS runs only local builds;
 > a missing or failed vault helper keeps the vault locked.
 
 The vault now lives in a separate process with core dumps disabled. The panel
@@ -47,13 +48,17 @@ Translations are shipped in `translations/de.json` and loaded through DMS's plug
 - DankMaterialShell **1.6.0 or newer** and Quickshell.
 - The official Bitwarden CLI (`bw`) and `jq`.
 - `wl-copy` and `wl-paste` from `wl-clipboard` for bounded clipboard operations.
-- Locally built vault, unlock-key and SSH helpers (`./scripts/build-helpers.sh`).
+- Rust/Cargo (`rust` on Arch) to build the vault, unlock-key and SSH helpers with
+  `./scripts/build-helpers.sh`.
 - `pinentry-qt` (or another `pinentry`) and `argon2` for quick unlock.
 - A running Secret Service provider (for example `gnome-keyring`) and `secret-tool` for remembering sessions, PIN and fingerprint unlock. Installing `libsecret` alone provides only the client, not a keyring service.
 - `gdbus` and `systemd-inhibit` for the suspend monitor.
 - An enrolled fingerprint and DMS's `assets/pam/fprint` configuration for fingerprint unlock.
 
-The setup screen identifies missing required dependencies. On Arch, its install action opens a terminal and runs `sudo pacman -S --needed` for the selected packages. On other distributions, install the named packages with the distribution's package manager.
+The setup screen identifies missing required dependencies and lists Cargo as a
+build-time dependency. On Arch, its install action opens a terminal and runs
+`sudo pacman -S --needed` for the selected packages. On other distributions,
+install the named packages with the distribution's package manager.
 
 ## Platform support
 
@@ -168,10 +173,10 @@ Bind `dms ipc call bitwarden toggle` in your compositor's shortcut configuration
 The upstream SSH helper, approval screens and key-handling code are retained. The agent is disabled by default. The plugin only executes a locally built helper; repository binaries are never probed or launched. Install Rust/Cargo and build it from the plugin checkout before enabling the agent, and rebuild after updates:
 
 ```sh
-cargo build --manifest-path agent/Cargo.toml --locked
+./scripts/build-helpers.sh
 ```
 
-Without this build the optional agent stays unavailable; normal vault operations still work. Tests build the source locally and exercise signing pipelines with disposable keys.
+Without the SSH helper the optional agent stays unavailable; normal vault operations still work if the vault helper is built. Tests build the source locally and exercise signing pipelines with disposable keys.
 
 See [the SSH-agent guide](docs/ssh-agent.md) for the original protocol and routing details. That guide and demo scripts still contain upstream Omarchy commands; use the DMS IPC commands above for this port. Live fingerprint and SSH signing depend on the local device/keyring and the user's own activation; automated tests use disposable keys.
 

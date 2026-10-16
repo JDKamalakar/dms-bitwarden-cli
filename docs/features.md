@@ -28,6 +28,8 @@ Every feature the plugin has, and why each one works the way it does. The
   DMS receives redacted metadata. Master-password re-prompt is enforced before
   protected actions. Revealing/editing deliberately brings selected secrets into
   the shell, where garbage collection is not secure memory erasure.
+  - After an update, use [**Build helpers**](vault-helper.md#if-the-helper-is-missing-or-fails)
+    in the vault warning to rebuild the local helpers.
 
 - **SSH Agent** (opt-in, `sshAgentEnabled`):
   - Serves the SSH keys in your vault to `ssh`, `git` and `ssh-keygen -Y sign` while the vault is unlocked, from a separate helper process that holds the private keys in memory and drops them on lock, logout, or exit. They are never written to disk and never reach QML.

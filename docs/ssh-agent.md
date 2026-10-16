@@ -11,7 +11,7 @@ Off by default. Turn on **Act as your SSH agent** in the settings screen and the
 
 Private keys are held only by that helper, in memory. They never reach QML -- the vault read is split in a `jq` stage and the panel's half has the private material removed before it arrives -- they are never written to disk, and they are dropped when the vault locks, when you log out, and when the helper exits.
 
-**Requirements.** Bitwarden CLI `2025.1.2+` for SSH key items; `2026.8.0+` also fixes a bug where one malformed SSH item fails the whole vault list. `jq`, which the plugin already needs. For the DMS port, build the helper locally with `cargo build --manifest-path agent/Cargo.toml --locked` from the plugin checkout before enabling it, and rebuild after updates. Only `agent/target/debug/qs-bitwarden-ssh-agent` is eligible; inherited repository binaries are never probed or launched. A missing, corrupt, stale, wrong-architecture, non-executable or self-test-failing helper disables **only** this feature, names the reason under **SSH AGENT STATUS**, and leaves the rest of the plugin working.
+**Requirements.** Bitwarden CLI `2025.1.2+` for SSH key items; `2026.8.0+` also fixes a bug where one malformed SSH item fails the whole vault list. `jq`, which the plugin already needs. For the DMS port, build the helpers locally with `./scripts/build-helpers.sh` from the plugin checkout before enabling it, and rebuild after updates. Only `agent/target/debug/qs-bitwarden-ssh-agent` is eligible; inherited repository binaries are never probed or launched. A missing, corrupt, protocol-incompatible, wrong-architecture, non-executable or self-test-failing helper disables **only** this feature, names the reason under **SSH AGENT STATUS**, and leaves the rest of the plugin working.
 
 #### Pointing SSH clients at it
 
@@ -74,18 +74,30 @@ git config --global commit.gpgsign true
 
 #### Verifying the helper
 
-The panel checks the shipped binary against `bin/SHA256SUMS` at launch and shows "checksum verified", and says plainly when it is running a locally built development helper instead of the shipped one. Be clear about what that check is worth: `SHA256SUMS` sits in the same directory as the binary *and* as the QML that reads it, so anyone able to replace one can replace the others. It is not tamper detection. What it does catch is real -- a partial clone, an LFS placeholder, an architecture or format mismatch, and above all a stale binary left behind by a `git pull` that updated the source.
+The DMS plugin checks the local helper's executable format, architecture, protocol
+and self-test before using it. A failed check disables only SSH support and names
+the reason under **SSH AGENT STATUS**.
 
-Provenance is the separate mechanism with a different root of trust. Releases from `v1.5.0` on carry a GitHub build-provenance attestation binding the binary's digest to this repository, workflow and commit, published alongside an SBOM and a dependency/licence report:
+See [source fingerprints and rebuilding](vault-helper.md) for the shared freshness
+warning and how to load rebuilt helpers. A stale build warns without stopping
+signing. The fingerprint is not an authenticity check.
+
+Upstream provenance is a separate mechanism with a different root of trust.
+Upstream releases from `v1.5.0` on carry a GitHub build-provenance attestation
+binding the binary's digest to this repository, workflow and commit, published
+alongside an SBOM and a dependency/licence report:
 
 ```bash
 gh attestation verify bin/x86_64-linux/qs-bitwarden-ssh-agent \
    --repo Elevate08/qs-bitwarden-cli
 ```
 
-`gh` is not an Omarchy dependency, so this is a check you run if you want it, not one the plugin can assume. Worth re-running after a plugin update, when the binary has changed.
+`gh` is not an Omarchy dependency, so this is a check you run if you want it, not
+one the plugin can assume. It verifies upstream artifacts, not the locally built
+helpers DMS runs.
 
-**When the check fails.** The panel disables SSH support, names the reason, and leaves the rest of the plugin working. If a locally built helper is present it falls back to that instead and says so on a banner -- which is the state to be careful about, because signing carries on with a binary that has no recorded digest and no provenance behind it. Either way the fix is to restore the shipped artifact:
+**Repairing an upstream Omarchy checkout.** These original upstream steps restore
+a shipped artifact; DMS instead needs a local rebuild via **Build helpers**.
 
 ```bash
 omarchy plugin remove io.github.elevate08.qs-bitwarden-cli

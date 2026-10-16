@@ -10,4 +10,5 @@ for crate in vault unlock-key agent; do
         agent) name=qs-bitwarden-ssh-agent ;;
     esac
     "$crate/target/debug/$name" --self-test
+    bash scripts/helper-source-hash.sh "$crate" > "$crate/target/debug/$name.source-sha256"
 done

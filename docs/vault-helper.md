@@ -5,8 +5,20 @@ core dumps disabled. The DMS shell receives redacted metadata and only explicitl
 requested secrets. This reduces crash-dump exposure; it cannot erase previously
 revealed or typed values from the shell's managed memory.
 
-Build all three helpers with `./scripts/build-helpers.sh`. DMS executes only
+Build and self-test all three helpers with `./scripts/build-helpers.sh` from the
+plugin directory, or choose **Build helpers** in the vault warning. DMS executes only
 local Cargo output, never binaries in `bin/`.
+
+Each successful build and self-test records a source fingerprint beside the binary
+as `<binary>.source-sha256`. The panel compares it with the crate's current build
+inputs. Older source or a missing build record shows a warning with **Build helpers**
+for the vault, quick-unlock or SSH helper, without locking the vault or disabling
+a working helper. The panel also remembers the stamp each running process started
+with. After rebuilding, restart DMS to load the vault helper, which survives
+lock/unlock. Turn the SSH agent off and on in settings to load its new build;
+quick-unlock starts a new helper for each operation. Nothing restarts automatically.
+The warning clears once running helpers and on-disk builds match the source.
+This records source freshness, not binary authenticity.
 
 ## What the helper holds, and what the shell holds
 
@@ -194,6 +206,20 @@ and its self-test. A failed check or missing helper leaves the vault locked;
 DMS does not permit the full-vault fallback in the shell. Build locally and
 use the retry banner. A helper that stops while unlocked invalidates the
 session and the SSH agent's keys and grants. Restart attempts are bounded.
+
+For a missing helper, a protocol or checksum mismatch, or a failed self-test,
+the banner offers **Build helpers**. A self-test failure can come from a stale
+build after an update, but rebuilding may not fix a machine-specific failure.
+The action runs this checkout's
+`scripts/build-helpers.sh` in a terminal and requires Rust/Cargo. If Cargo is
+missing, it offers `sudo pacman -S --needed rust` on pacman systems; elsewhere,
+install Rust/Cargo with your distribution's package manager.
+
+After the terminal process exits, the panel rechecks all three helpers without
+restarting an active vault. If your terminal launcher detaches, use **Check helpers
+again** on the source warning once the build finishes. The locked-vault warning
+text also retries after a manual build or repair. Cargo itself is not a runtime
+requirement, so its absence does not block users with working local helpers.
 
 ## Checking a local build
 

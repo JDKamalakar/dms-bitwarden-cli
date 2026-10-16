@@ -918,37 +918,43 @@ Item {
         }
 
         // -------------------------------------------------------------------
-        // Development helper banner
+        // Stale helper source banner
         // -------------------------------------------------------------------
-        // Shown on every screen while an unverified local build signs.
+        // A source mismatch warns but leaves all working helpers running.
         BorderSurface {
-          visible: root.vault.sshAgentHelper.source === "development" && root.vault.activeScreen !== "settings"
+          visible: root.vault.helpersSourceOutdated && root.vault.activeScreen !== "settings"
           width: parent.width
-          implicitHeight: sshDevHelperText.implicitHeight + Style.space(12)
+          implicitHeight: helperSourceBannerBody.implicitHeight + Style.space(12)
           color: Util.alpha(DmsColor.urgent, 0.15)
           radius: Style.cornerRadius
           borderSpec: Border.surfaceSpec("menu", "border", DmsColor.urgent, 1)
 
-          Row {
+          Column {
+            id: helperSourceBannerBody
             anchors.centerIn: parent
             width: parent.width - Style.space(16)
             spacing: Style.space(8)
             Text {
               textFormat: Text.PlainText
-              text: "󰀪"
-              color: DmsColor.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
-            }
-            Text {
-              id: sshDevHelperText
-              textFormat: Text.PlainText
-              text: Model.sshAgentDevelopmentHelperWarning(root.vault.sshAgentHelper)
+              text: root.vault.helpersSourceWarning
               color: root.fg
               font.family: root.fontFamily
               font.pixelSize: Style.font.bodySmall
               wrapMode: Text.Wrap
-              width: parent.width - Style.space(24)
+              width: parent.width
+            }
+            Button {
+              enabled: root.vault.canBuildHelpers && !root.vault.helpersBuilding
+              text: root.vault.helpersBuilding ? Tr.text("Building helpers...") : Tr.text("Build helpers")
+              accent: DmsColor.urgent
+              fontFamily: root.fontFamily
+              fontSize: Style.font.bodySmall
+              onClicked: root.vault.buildHelpers()
+            }
+            Button {
+              text: Tr.text("Check helpers again")
+              fontSize: Style.font.bodySmall
+              onClicked: root.vault.recheckHelpers()
             }
           }
         }
@@ -962,7 +968,7 @@ Item {
         BorderSurface {
           visible: root.vault.vaultHelperWarning !== "" && root.vault.activeScreen !== "settings"
           width: parent.width
-          implicitHeight: vaultHelperText.implicitHeight + Style.space(12)
+          implicitHeight: vaultHelperBannerBody.implicitHeight + Style.space(12)
           color: Util.alpha(DmsColor.urgent, 0.15)
           radius: Style.cornerRadius
           borderSpec: Border.surfaceSpec("menu", "border", DmsColor.urgent, 1)
@@ -976,26 +982,40 @@ Item {
             onClicked: root.vault.retryVaultHelper()
           }
 
-          Row {
+          Column {
+            id: vaultHelperBannerBody
             anchors.centerIn: parent
             width: parent.width - Style.space(16)
             spacing: Style.space(8)
-            Text {
-              textFormat: Text.PlainText
-              text: "󰀪"
-              color: DmsColor.urgent
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.body
+
+            Row {
+              width: parent.width
+              spacing: Style.space(8)
+              Text {
+                textFormat: Text.PlainText
+                text: "󰀪"
+                color: DmsColor.urgent
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.body
+              }
+              Text {
+                id: vaultHelperText
+                textFormat: Text.PlainText
+                text: root.vault.vaultHelperWarning
+                color: root.fg
+                font.family: root.fontFamily
+                font.pixelSize: Style.font.bodySmall
+                wrapMode: Text.Wrap
+                width: parent.width - Style.space(24)
+              }
             }
-            Text {
-              id: vaultHelperText
-              textFormat: Text.PlainText
-              text: root.vault.vaultHelperWarning
-              color: root.fg
-              font.family: root.fontFamily
-              font.pixelSize: Style.font.bodySmall
-              wrapMode: Text.Wrap
-              width: parent.width - Style.space(24)
+
+            Button {
+              visible: root.vault.canBuildHelpers
+              enabled: !root.vault.helpersBuilding
+              text: root.vault.helpersBuilding ? Tr.text("Building helpers...") : Tr.text("Build helpers")
+              fontSize: Style.font.bodySmall
+              onClicked: root.vault.buildHelpers()
             }
           }
         }
@@ -2139,7 +2159,7 @@ Item {
                   Text {
                     textFormat: Text.PlainText
                     width: parent.width
-                    text: modelData.purpose
+                    text: Tr.text(modelData.purpose)
                     color: root.dim
                     font.family: root.fontFamily
                     font.pixelSize: Style.font.caption

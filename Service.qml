@@ -932,7 +932,9 @@ Item {
   }
 
   function onSshAgentHelperInspected(raw) {
-    root.sshAgentHelper = Model.parseSshAgentHelperInspection(raw)
+    var helper = Model.parseSshAgentHelperInspection(raw)
+    helper.message = Tr.text(helper.message)
+    root.sshAgentHelper = helper
   }
 
   // The quick-unlock tool, inspected at every start: the envelope is written
@@ -948,7 +950,9 @@ Item {
   }
 
   function onUnlockKeyInspected(raw) {
-    root.unlockKeyHelper = Model.parseUnlockKeyInspection(raw)
+    var helper = Model.parseUnlockKeyInspection(raw)
+    helper.message = Tr.text(helper.message)
+    root.unlockKeyHelper = helper
     root.envelopeReadinessChanged()
   }
 
@@ -964,6 +968,39 @@ Item {
   // when `allowVaultWithoutHelper` is set (useVaultFallback()). Runs started
   // before that is decided wait for it.
   property var vaultHelper: Model.uninspectedHelper()
+  readonly property bool helpersBuilding: helperBuildProc.running
+  property string vaultHelperStartStamp: ""
+  property string unlockKeyStartStamp: ""
+  readonly property bool unlockKeyRunning: envelopeProc.running && envelopeProc.runId > 0
+    && envelopeJob !== null && envelopeJob.helper !== false
+  property string sshAgentStartStamp: ""
+  readonly property bool helpersSourceOutdated: Model.helperSourceOutdated(vaultHelper, vaultHelperProc.running ? vaultHelperStartStamp : undefined)
+    || Model.helperSourceOutdated(unlockKeyHelper, unlockKeyRunning ? unlockKeyStartStamp : undefined)
+    || Model.helperSourceOutdated(sshAgentHelper, sshAgentProc.running ? sshAgentStartStamp : undefined)
+  readonly property string helpersSourceWarning: {
+    var messages = []
+    if (vaultHelper.sourceStamp === "match" && unlockKeyHelper.sourceStamp === "match" && sshAgentHelper.sourceStamp === "match")
+      messages.push(Tr.text("Helpers were rebuilt."))
+    else messages.push(Tr.text(Model.helperSourceWarning()))
+    if (vaultHelper.sourceStamp === "match" && vaultHelperProc.running && Model.helperSourceOutdated(vaultHelper, vaultHelperStartStamp))
+      messages.push(Tr.text("Restart DMS to load the rebuilt vault helper. Locking and unlocking does not restart it."))
+    if (sshAgentHelper.sourceStamp === "match" && sshAgentProc.running && Model.helperSourceOutdated(sshAgentHelper, sshAgentStartStamp))
+      messages.push(Tr.text("Turn the SSH agent off and on in settings to load its rebuilt helper."))
+    if (unlockKeyHelper.sourceStamp === "match" && unlockKeyRunning && Model.helperSourceOutdated(unlockKeyHelper, unlockKeyStartStamp))
+      messages.push(Tr.text("Quick-unlock will use its rebuilt helper on the next operation."))
+    return messages.join(" ")
+  }
+  readonly property bool canBuildHelpers: sshAgentPluginDir !== ""
+    && (helpersSourceOutdated || (vaultHelperState === "stopped" && Model.helperRebuildable(vaultHelper)))
+
+  FileView { id: helperStampFile; blockLoading: true; printErrors: false }
+
+  function readHelperStartStamp(spec, source) {
+    var path = Model.helperPath(sshAgentPluginDir, spec, source)
+    helperStampFile.path = ""
+    helperStampFile.path = path ? path + ".source-sha256" : ""
+    return helperStampFile.text().trim()
+  }
   // Set as the shell unloads: a helper exit then is expected.
   property bool shuttingDown: false
   // "pending" | "starting" | "active" | "fallback" | "stopped"
@@ -1006,6 +1043,9 @@ Item {
 
   function onVaultHelperInspected(raw) {
     vaultHelper = Model.parseVaultHelperInspection(raw)
+    // Only startup or an explicit retry may start a process. A refresh can
+    // finish after a crash exhausted the restart budget.
+    if (vaultHelperState !== "pending") return
     if (Model.helperReady(vaultHelper)) startVaultHelper()
     else useVaultFallback(vaultHelper.message)
   }
@@ -1031,7 +1071,7 @@ Item {
   function useVaultFallback(reason) {
     if (!allowVaultWithoutHelper) {
       vaultHelperState = "stopped"
-      vaultHelperWarning = Model.vaultHelperUnavailableWarning(reason)
+      vaultHelperWarning = Model.vaultHelperUnavailableWarning(reason, Tr.text)
       console.warn("qs-bitwarden: " + vaultHelperWarning)
       return
     }
@@ -1066,6 +1106,28 @@ Item {
     vaultHelperWarning = ""
     vaultHelperState = "pending"
     inspectVaultHelper()
+  }
+
+  function buildHelpers() {
+    if (!canBuildHelpers || helpersBuilding) return
+    var cmd = Model.buildHelpersCommand(sshAgentPluginDir, Tr.text)
+    if (!cmd) return
+    helperBuildProc.command = cmd
+    helperBuildProc.running = true
+  }
+
+  function recheckHelpers() {
+    if (shuttingDown) return
+    if (vaultHelperState === "stopped") retryVaultHelper()
+    else inspectVaultHelper()
+    inspectUnlockKey()
+    inspectSshAgentHelper()
+  }
+
+  function onHelpersBuildExited() {
+    if (shuttingDown) return
+    recheckHelpers()
+    checkDependencies()
   }
 
   Timer {
@@ -1687,7 +1749,7 @@ Item {
     keyringRepairQueued = true
     var slots = (accountRegistry.accounts || []).map(function(a) { return a.slot })
     queueEnvelopeJob({
-      command: Model.keyringRepairCommand(sshAgentPluginDir, slots),
+      command: Model.keyringRepairCommand(sshAgentPluginDir, slots), helper: false,
       onDone: function(exitCode, out) { root.onKeyringRepaired(exitCode, out) }
     })
   }
@@ -1750,7 +1812,7 @@ Item {
   function withEnvelopeAccount(then, otherwise) {
     if (accountId) { then(); return }
     queueEnvelopeJob({
-      command: Model.statusCommand(),
+      command: Model.statusCommand(), helper: false,
       env: bwEnv(), session: true,
       onDone: function(code, out) {
         var st = code === 0 ? Model.parseStatus(out) : null
@@ -1904,7 +1966,7 @@ Item {
     env[Model.keyringSecretEnvVar()] = String(password || "")
     beginEpochOperation("bwVerify")
     queueEnvelopeJob({
-      command: Model.bwVerifyPasswordCommand(),
+      command: Model.bwVerifyPasswordCommand(), helper: false,
       env: bwEnv(env), secretOutput: true, capture: "session",
       onDone: function(code, out) {
         var s = code === 0 ? Model.extractSessionToken(out) : ""
@@ -8273,6 +8335,11 @@ Item {
   }
 
   Process {
+    id: helperBuildProc
+    onExited: root.onHelpersBuildExited()
+  }
+
+  Process {
     id: vaultHelperInspectProc
     stdout: StdioCollector {
       waitForEnd: true
@@ -8287,7 +8354,10 @@ Item {
     stdout: SplitParser {
       onRead: function(line) { root.onVaultHelperLine(line) }
     }
-    onStarted: root.onVaultHelperStarted()
+    onStarted: {
+      root.vaultHelperStartStamp = root.readHelperStartStamp(Model.VAULT_HELPER_SPEC, root.vaultHelper.source)
+      root.onVaultHelperStarted()
+    }
     onExited: function(exitCode) { root.onVaultHelperExited(exitCode) }
   }
 
@@ -8308,6 +8378,7 @@ Item {
       id: envelopeStdout
       waitForEnd: true
     }
+    onStarted: root.unlockKeyStartStamp = root.readHelperStartStamp(Model.UNLOCK_KEY_SPEC, root.unlockKeyHelper.source)
     onExited: function(exitCode) { root.onEnvelopeJobExited(exitCode) }
   }
 
@@ -8387,7 +8458,10 @@ Item {
     stdout: SplitParser {
       onRead: function(line) { root.applySshAgentEvent({ kind: "line", line: line, nowMs: Date.now() }) }
     }
-    onStarted: root.applySshAgentEvent({ kind: "started", nowMs: Date.now() })
+    onStarted: {
+      root.sshAgentStartStamp = root.readHelperStartStamp(Model.SSH_AGENT_HELPER_SPEC, root.sshAgentHelper.source)
+      root.applySshAgentEvent({ kind: "started", nowMs: Date.now() })
+    }
     onExited: function(exitCode) {
       sshAgentTerminateTimer.stop()
       root.onSshAgentHelperExited(exitCode)

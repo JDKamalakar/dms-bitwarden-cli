@@ -251,10 +251,6 @@ eq("and so does every view before the first tick",
   Model.sshAgentGrantsAt(announced, 0).length, 1)
 eq("a malformed set re-derives to nothing", Model.sshAgentGrantsAt(null, 1).length, 0)
 
-const localWarning = Model.sshAgentDevelopmentHelperWarning({source:"development"})
-check("local builds are identified", /locally built/i.test(localWarning), localWarning)
-check("updates require a trusted rebuild", /Rebuild.*trusted source/i.test(localWarning), localWarning)
-
 // -------------------------------------------------------------------------
 // Never prompt over a locked screen
 // -------------------------------------------------------------------------
@@ -575,9 +571,6 @@ for (const [what, src] of [["the approval prompt", approvalSrc], ["the settings 
 check("the unlock prompt does not either", !/sshUnlockRequest\.pid/.test(panelSrc),
   "the unlock prompt still renders a pid")
 
-check("a development helper is called out wherever the user is",
-  /sshAgentHelper\.source === "development"[\s\S]{0,900}?sshAgentDevelopmentHelperWarning\(/.test(panelSrc),
-  "nothing warns that an unverified helper is serving keys")
 check("the diagnostics say which helper is running and whether it was verified",
   /helperSource: root\.sshAgentHelper\.source[\s\S]{0,200}?helperChecksum: root\.sshAgentHelper\.checksum/.test(panelSrc),
   "sshAgentStatus cannot tell a shipped helper from a local build")

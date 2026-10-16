@@ -19,7 +19,7 @@ const FRESH = Model.parseDependencies(
   "bw=0\nbw_version=\njq=0\nwlcopy=1\nhyprctl=1\nsecrettool=1\nfprintd=0\nfingerprint_ready=0\nomarchy=1")
 // The same machine after one trip through the setup screen's install button.
 const INSTALLED = Model.parseDependencies(
-  "bw=1\nbw_version=2025.1.2\njq=1\nwlcopy=1\nhyprctl=1\nsecrettool=1\nfprintd=1\nfingerprint_ready=0\nomarchy=1")
+  "bw=1\nbw_version=2025.1.2\njq=1\ncargo=1\nwlcopy=1\nhyprctl=1\nsecrettool=1\nfprintd=1\nfingerprint_ready=0\nomarchy=1")
 // Required tools only. The optional ones stay absent, and must not gate.
 const MINIMAL = Model.parseDependencies(
   "bw=1\nbw_version=2025.1.2\njq=1\nwlcopy=1\nhyprctl=0\nsecrettool=0\nfprintd=0\nfingerprint_ready=0\nomarchy=1")
@@ -117,7 +117,7 @@ check("dismissed: an install landing later is still picked up",
 // --- what the install button asks for ---------------------------------------
 const fresh = Model.missingPackages(FRESH)
 check("install: asks for the tools it can install, and only those",
-  fresh.join(" ") === "bitwarden-cli jq",
+  fresh.join(" ") === "bitwarden-cli jq rust",
   `got [${fresh}]`)
 
 check("install: never asks for a package Omarchy already ships",
@@ -167,7 +167,7 @@ check("fingerprint: the row is a setup row, not a package row",
 
 check("fingerprint: never reaches the package installer",
   Model.missingPackages(Model.parseDependencies(
-    "bw=1\nbw_version=2025.1.2\njq=1\nfprintd=0\nfingerprint_ready=0\nfingerprint_hw=1\nomarchy=1")).length === 0,
+    "bw=1\nbw_version=2025.1.2\njq=1\ncargo=1\nfprintd=0\nfingerprint_ready=0\nfingerprint_hw=1\nomarchy=1")).length === 0,
   "fprintd was handed to omarchy install app")
 
 const fp = Model.fingerprintSetupCommand()
