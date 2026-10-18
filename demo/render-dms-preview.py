@@ -8,6 +8,9 @@ parser.add_argument('--screen', choices=('vault', 'login'), default='vault')
 parser.add_argument('--smoke-daemon', action='store_true', help='Load the complete daemon with disposable environment and failing CLI stubs')
 parser.add_argument('--test-ui', action='store_true', help='Run bounded fields and approval UI tests with native DMS controls')
 parser.add_argument('--check-controls', action='store_true', help='Exercise native inputs with disposable data')
+parser.add_argument('--controls-style', choices=('Basic', 'Material'), default='Basic')
+parser.add_argument('--check-layout', action='store_true', help='Check rendered header, action and filter bounds with fictional vault data')
+parser.add_argument('--panel-width', type=int, choices=(450, 520), default=520)
 parser.add_argument('--dms-dir', type=Path, help='Installed DMS shell directory providing native widgets')
 parser.add_argument('--output', type=Path, default=repo/'docs/screenshots/dms-vault-preview.png')
 args=parser.parse_args()
@@ -110,12 +113,14 @@ Rectangle {
  width: contentWidth + 32; height: contentHeight + 32
  color: Theme.surfaceContainer; radius: 20
  border.color: Theme.outline; border.width: 1
- function fittedContentWidth(value) {return 510;}
- function fittedContentHeight(value,maximum) {return 510;}
+ function fittedContentWidth(value) {return Math.min(value, 520);}
+ function fittedContentHeight(value,maximum) {return Math.min(value, maximum || value, 640);}
  function setTriggerPosition() {}
  function refocus() {}
  Item { id: holder; anchors.fill: parent; anchors.margins: 16 }
 }''')
+panel_stub = tmp/'DmsUi/KeyboardPanel.qml'
+panel_stub.write_text(panel_stub.read_text().replace('Math.min(value, 520)', f'Math.min(value, {args.panel_width})'))
 for component in (tmp/'DmsUi').glob('*.qml'):
  if component.stem not in ['Style','DmsColor','Border','Util','Tr']:
   with (tmp/'DmsUi/qmldir').open('a') as f:f.write(f'{component.stem} 1.0 {component.name}\n')
@@ -128,7 +133,7 @@ import Quickshell
 import "BitwardenModel.js" as Model
 import "Fixture.js" as Fixture
 Window {
- id: window; visible: true; width: 1280; height: 720; color: "#100e15"
+ id: window; visible: true; width: 1280; height: 840; color: "#100e15"
  Item { id: canvas; anchors.fill: parent
  Rectangle { anchors.fill: parent; gradient: Gradient { GradientStop { position: 0; color: "#211a30" } GradientStop { position: 1; color: "#100e15" } } }
  Column { x: 64; y: 88; width: 540; spacing: 20
@@ -143,20 +148,23 @@ Window {
  Component.onCompleted: {
   status = "unlocked"; session = ""; userEmail = "demo@example.com";
   folders = Fixture.data.folders; items = Model.parseItems(JSON.stringify(Fixture.data.items));
-  cursorActive = true; currentScreen = "main"; isLoading = false; isSyncing = false;
+  cursorActive = true; currentScreen = "main"; isLoading = false; isSyncing = false; accountsLoaded = true;
   refreshDerivedFromItems();
  }
  }
- Panel { x: 660; y: 64; vault: service; opened: true }
- Text { x: 64; y: 670; text: "OFFICIAL BITWARDEN CLI  /  OPEN SOURCE"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 13; font.letterSpacing: 1.8 }
- Text { x: 660; y: 631; text: "Demo vault • No real credentials"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 14 }
+ Panel { id: previewPanel; x: 660; y: 64; vault: service; opened: true }
+ Text { x: 64; y: 812; text: "OFFICIAL BITWARDEN CLI  /  OPEN SOURCE"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 13; font.letterSpacing: 1.8 }
+ Text { x: 660; y: 784; text: "Demo vault • No real credentials"; color: "#91869e"; font.family: "Inter"; font.pixelSize: 14 }
  }
- Timer { interval: 1500; running: true; onTriggered: canvas.grabToImage(function(result) {result.saveToFile("/tmp/bitwarden-dankbar-preview.png"); Qt.quit();}) }
+ Timer { interval: 1500; running: true; onTriggered: { canvas.grabToImage(function(result) {result.saveToFile("/tmp/bitwarden-dankbar-preview.png"); Qt.quit();}) } }
 }''')
 shell=tmp/'shell.qml'
 if args.screen == 'login':
  shell.write_text(shell.read_text().replace('status = "unlocked";', 'status = "unauthenticated";'))
 shell.write_text(shell.read_text().replace(chr(34)+'/tmp/bitwarden-dankbar-preview.png'+chr(34),json.dumps(str(output))))
+if args.check_layout:
+ shutil.copy(repo/'demo/check-vault-layout.js', tmp/'CheckVaultLayout.js')
+ shell.write_text(shell.read_text().replace('import Quickshell\n', 'import Quickshell\nimport "CheckVaultLayout.js" as LayoutChecks\n', 1).replace('canvas.grabToImage(function', 'LayoutChecks.verify(previewPanel); canvas.grabToImage(function', 1))
 if args.smoke_daemon:
  daemon=tmp/'Daemon.qml'
  daemon.write_text(daemon.read_text().replace('id: root', 'id: root\n    readonly property var testService: service',1))
@@ -187,7 +195,7 @@ if args.smoke_daemon:
   f=stubs/name;f.write_text('#!/bin/sh\nexit 1\n');f.chmod(0o700)
  env['PATH']=str(stubs)
 env['QT_QPA_PLATFORMTHEME']=''
-env['QT_QUICK_CONTROLS_STYLE']='Basic'
+env['QT_QUICK_CONTROLS_STYLE']=args.controls_style
 if args.check_controls or args.test_ui:
  # QtTest runs the real controls without Quickshell's host module loader.
  (tmp/'qs').symlink_to(tmp, target_is_directory=True)

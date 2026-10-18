@@ -539,6 +539,12 @@
     "Approve matching requests from this program until the screen locks": "Passende Anfragen dieses Programms bis zur Bildschirmsperre erlauben",
     "Approve matching requests from this program until the time limit expires": "Passende Anfragen dieses Programms bis zum Ablauf der Zeitbegrenzung erlauben",
     "FIDO2 setup instructions": "Hinweise zur FIDO2-Einrichtung",
-    "Enable FIDO2 unlock": "FIDO2-Entsperrung aktivieren"
+    "Enable FIDO2 unlock": "FIDO2-Entsperrung aktivieren",
+    "New item": "Neuer Eintrag",
+    "Sync": "Abgleichen",
+    "Send": "Send",
+    "Generator": "Generator",
+    "Accounts": "Konten",
+    "Search vault...": "Tresor durchsuchen..."
   }
 }

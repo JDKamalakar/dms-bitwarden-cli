@@ -48,6 +48,7 @@ Item {
       width: parent.width
 
       Text {
+        objectName: "panelHeroTitle"
         textFormat: Text.PlainText
         visible: root.title !== ""
         text: root.title

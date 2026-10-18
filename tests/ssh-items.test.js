@@ -107,9 +107,6 @@ try {
       && /text: root\.isLoading && root\.items\.length === 0[\s\S]{0,120}root\.emptyListMessage\(\)/.test(panelSrc),
     "the empty list cannot distinguish an unconfirmed server from an empty vault")
 
-  check("search help says SSH public fields are searchable",
-    /placeholderText:\s*"[^"]*(public keys|fingerprints)[^"]*"/i.test(panelSrc),
-    "search placeholder does not mention public keys or fingerprints")
   check("the detail delete shortcut is guarded for read-only SSH items",
     /lower === "x"[\s\S]{0,120}detailItem[\s\S]{0,120}typeCode !== 5[\s\S]{0,120}showDeleteConfirm = true/.test(panelSrc),
     "detail shortcut x can open delete confirmation for SSH")

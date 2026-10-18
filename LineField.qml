@@ -80,14 +80,14 @@ FocusScope {
 
   // Binding-preserving value. insert and remove do not break `text:`.
   property alias text: store.text
-  property alias placeholderText: editor.placeholderText
+  property string placeholderText: ""
   property alias cursorPosition: editor.cursorPosition
   property alias selectedText: editor.selectedText
   property alias length: store.length
 
   activeFocusOnTab: false
   implicitWidth: editor.implicitWidth
-  implicitHeight: editor.implicitHeight
+  implicitHeight: Math.max(40, Style.spacing.controlHeight, editor.implicitHeight)
 
   function pasteCommand(primary) {
     // --type text: without it wl-paste takes whatever is offered, and an
@@ -496,6 +496,8 @@ FocusScope {
 
     font.family: Style.font.family
     font.pixelSize: Style.font.body
+    placeholderText: ""
+    Accessible.name: root.placeholderText
     color: root.foreground
     selectionColor: root.password ? "transparent" : root.selectionTint
     selectedTextColor: root.password ? "transparent" : root.foreground
@@ -505,6 +507,20 @@ FocusScope {
     rightPadding: root.rightPadding
     topPadding: root.verticalPadding + Border.top(root._borderSpec)
     bottomPadding: root.verticalPadding + Border.bottom(root._borderSpec)
+
+    // Material's floating placeholder would duplicate the form's external label.
+    Text {
+      x: root.horizontalPadding + Border.left(root._borderSpec)
+      anchors.verticalCenter: parent.verticalCenter
+      width: Math.max(0, parent.width - x - editor.rightPadding)
+      visible: root.length === 0 && root.placeholderText !== ""
+      text: root.placeholderText
+      textFormat: Text.PlainText
+      font: editor.font
+      color: Util.alpha(root.foreground, 0.55)
+      elide: Text.ElideRight
+      Accessible.ignored: true
+    }
 
     // The style menu pastes through the control, which reads the offer here.
     ContextMenu.menu: null

@@ -1,5 +1,19 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- Keep vault branding, account and item count separate from a labeled wrapping action toolbar.
+- Give virtualized vault rows more vertical space and reserve compact quick-action width only while actions are visible.
+- Present folder, organization and type filters as equal-width cards with independently elided labels and values.
+
+### Fixed
+
+- Keep quick actions above the row background's hit target and preserve hover while entering them.
+- Keep input hints inline and hide them when populated, including under Qt Material.
+- Add fixture-only rendered bounds checks at compact/default panel widths and a native input-hint regression.
+
 ## [1.11.6-dms.2] - 2026-10-14
 
 - Port upstream `fe35484`: keep vault-derived SSH key names out of process arguments during public-key export, pruning and logout cleanup.

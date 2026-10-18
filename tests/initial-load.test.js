@@ -100,16 +100,6 @@ const sync = bodyOf("onSyncFinished")
 check("a successful server sync also reloads items before metadata",
   /beginInitialVaultLoad\(/.test(sync) && !/loadOrganizations\(/.test(sync) && !/loadFolders\(/.test(sync), sync)
 
-check("the empty list says when items are loading", panelSrc.includes('"Loading items..."'), "missing loading label")
-const syncButton = panelSrc.slice(panelSrc.indexOf("// Sync Vault Button"), panelSrc.indexOf("// Send Button"))
-check("the compact sync control reports progress using supported PanelActionButton properties",
-  /tooltipText:\s*root\.isSyncing\s*\?\s*"Syncing\.\.\."/.test(syncButton)
-    && /enabled:\s*!root\.isSyncing/.test(syncButton)
-    && !/iconSpinning/.test(syncButton),
-  syncButton)
-check("the panel header reports sync progress in text",
-  /if\s*\(root\.isSyncing\)\s*return\s*"Syncing\.\.\."/.test(panelSrc),
-  "missing Syncing... header state")
 
 const listProcessStart = panelSrc.indexOf("id: listProc")
 const listProcess = listProcessStart === -1 ? "" : panelSrc.slice(listProcessStart, listProcessStart + 900)

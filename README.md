@@ -110,6 +110,29 @@ While typing in the search field, Alt plus the corresponding key runs a shortcut
 
 Right-clicking the bar icon locks an unlocked vault, or opens a locked vault. Both horizontal and vertical bars are supported. A single daemon owns the vault and IPC, shared by every bar, so multiple monitors do not create competing sessions.
 
+### Vault layout
+
+The header keeps the vault name, account and filtered item count readable.
+Settings, lock and close stay in the header; labeled New item, Sync, Send,
+Generator and Accounts actions occupy a separate wrapping toolbar.
+The virtualized list gives names and subtitles more room, with compact quick
+actions on the selected/hovered row. Folder, organization and type filters use
+equal-width cards with separate labels and values; their full values remain in
+tooltips. Existing keyboard shortcuts and protected-item checks are unchanged.
+
+Inputs use a single inline hint rather than a Material floating label, so an
+external form label is not duplicated and a filled input does not show its hint.
+
+The fixture renderer can also check actual rendered bounds at compact and default
+widths, without opening your real vault:
+
+```sh
+python3 demo/render-dms-preview.py --check-layout --panel-width 450 --output /tmp/bitwarden-450.png
+python3 demo/render-dms-preview.py --check-layout --panel-width 520 --output /tmp/bitwarden-520.png
+python3 demo/render-dms-preview.py --test-ui --controls-style Material
+```
+
+
 ## Fingerprint unlock
 
 The DMS port uses the **same fingerprint-only PAM configuration as DMS's lock screen**:
