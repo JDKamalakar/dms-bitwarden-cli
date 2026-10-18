@@ -11,7 +11,16 @@ Button {
   property string glyph: ""
   property string label: ""
 
-  height: tileColumn.implicitHeight + Style.space(12)
+  implicitHeight: tileColumn.implicitHeight + Style.space(12)
+  // Use natural heights, not assigned heights, so the row cannot feed back.
+  height: {
+    let tallest = implicitHeight
+    if (parent) for (let sibling of parent.children) {
+      if (sibling.visible && sibling instanceof ChoiceTile)
+        tallest = Math.max(tallest, sibling.implicitHeight)
+    }
+    return tallest
+  }
   bordered: true
   accent: DmsColor.accent
   fontFamily: tile.panel.fontFamily
@@ -43,6 +52,8 @@ Button {
       font.family: tile.panel.fontFamily
       font.pixelSize: Style.font.caption
       font.bold: tile.selected
+      wrapMode: Text.Wrap
+      maximumLineCount: 3
       elide: Text.ElideRight
     }
   }

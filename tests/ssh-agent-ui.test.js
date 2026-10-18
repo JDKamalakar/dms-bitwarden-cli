@@ -816,9 +816,10 @@ check("a prompt withdrawn because a grant answered it costs no cooldown",
   /message\.reason === "granted"\) \{\s*\/\/[^\n]*\n\s*\} else if \(message\.reason === "released"\)/.test(panelSrc)
     && /\} else \{\s*root\.sshCooldown = Model\.sshAgentCooldownAfter\(root\.sshCooldown, "timeout"/.test(panelSrc),
   "a granted withdrawal would be counted as an unanswered prompt")
-// Every decision sits in one row of tiles; Deny stays first and focused.
-check("the approval decisions share one row, Deny first",
-  /Row \{\s*id: decisionRow[\s\S]*?ChoiceTile \{\s*id: denyButton[\s\S]*?label: "Deny all[\s\S]*?label: "Approve once"[\s\S]*?grantShortLabel/.test(approvalSrc)
+// Keep decision order when four tiles become a two-column grid.
+check("the approval decisions share a grid, Deny first",
+  /Grid \{\s*id: decisionRow[\s\S]*?ChoiceTile \{\s*id: denyButton[\s\S]*?label: "Deny all[\s\S]*?label: "Approve once"[\s\S]*?grantShortLabel/.test(approvalSrc)
+    && /columns: count === 4 \? 2 : count/.test(approvalSrc)
     && !/^\s*Button \{/m.test(approvalSrc), "")
 check("approval screen provides a Deny all button when multiple requests exist",
   /label:\s*"Deny all \("\s*\+\s*panel\.sshPendingCount\s*\+\s*"\)"/.test(approvalSrc)
