@@ -1,6 +1,6 @@
 # Bitwarden Dankbar
 
-> Version 1.11.6-dms.2: security core ported from upstream 1.11.6. Build all three
+> Version 1.11.6-dms.3: security core ported from upstream 1.11.6. Build all three
 > helpers after updating with [**Build helpers**](docs/vault-helper.md#if-the-helper-is-missing-or-fails)
 > or `./scripts/build-helpers.sh`. DMS runs only local builds;
 > a missing or failed vault helper keeps the vault locked.

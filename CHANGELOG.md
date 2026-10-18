@@ -1,6 +1,11 @@
 # Changelog
 
-## [Unreleased]
+## [1.11.6-dms.3] - 2026-10-18
+
+### Added
+
+- Offer a local helper build from the panel after updates, with source-freshness records and translated recovery instructions.
+- List Rust/Cargo as an optional build-time dependency.
 
 ### Changed
 
@@ -9,6 +14,8 @@
 - Present folder, organization and type filters as equal-width cards with independently elided labels and values.
 
 ### Fixed
+
+- Wrap SSH approval and unlock-method captions; use a two-column grid for four approval choices.
 
 - Keep quick actions above the row background's hit target and preserve hover while entering them.
 - Keep input hints inline and hide them when populated, including under Qt Material.

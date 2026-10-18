@@ -2,7 +2,7 @@
   "id": "bitwarden",
   "name": "Bitwarden Dankbar",
   "description": "Search and manage Bitwarden or Vaultwarden directly in DMS using the official Bitwarden CLI.",
-  "version": "1.11.6-dms.2",
+  "version": "1.11.6-dms.3",
   "author": "David Spencer; DMS port by coldi1337",
   "license": "MIT",
   "icon": "shield",
