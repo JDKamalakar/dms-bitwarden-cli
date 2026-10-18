@@ -4422,6 +4422,12 @@ var DEPENDENCIES = [
     purpose: "Safely strips SSH private keys before the panel reads your vault."
   },
   {
+    key: "cargo", label: "Rust/Cargo", binary: "cargo", pkg: "rust", aur: false,
+    // Build-time only: working helpers do not need cargo to unlock the vault.
+    required: false,
+    purpose: "Builds all three local helpers after installation or an update."
+  },
+  {
     // Set up by `omarchy setup security fingerprint` (packages, enrolment,
     // PAM), not a package install: `ready` needs an enrolled finger too.
     key: "fprintd", label: "Fingerprint unlock", binary: "fprintd-list", pkg: "fprintd", aur: false,
@@ -5198,11 +5204,17 @@ function helperPath(pluginDir, spec, source) {
   return ""
 }
 
-// Banner text when a local build serves SSH keys: it has no digest or
-// provenance. Says whether the shipped one was rejected or just absent; the
-// fix is to reinstall the plugin.
-function sshAgentDevelopmentHelperWarning(helper) {
-  return "A locally built helper is serving your SSH keys. Rebuild it from trusted source after updating the plugin."
+// A stale or unrecorded build warns without disabling a working helper.
+function helperSourceOutdated(helper, runningStamp) {
+  if (!helper) return false
+  if (runningStamp !== undefined) {
+    return !/^[0-9a-f]{64}$/.test(helper.sourceHash) || runningStamp !== helper.sourceHash
+  }
+  return helperReady(helper) && helper.source === "development" && helper.sourceStamp !== "match"
+}
+
+function helperSourceWarning() {
+  return "A helper was built from older plugin source or has no build record. Rebuild it from trusted source."
 }
 
 function sshAgentHelperSourceLabel(source) {
@@ -5223,7 +5235,8 @@ function helperInspectCommand(pluginDir, spec) {
   var sumsLine = "^[0-9a-f]{64}  " + sumsPath.replace(/[.]/g, "\\.") + "$"
 
   var script = "__root=" + shellQuote(root) + "; "
-    + "__report() { printf '%s\\n' \"$@\"; exit 0; }; "
+    + "__hash=\"$(timeout 5 bash \"$__root/scripts/helper-source-hash.sh\" \"$__root/" + spec.development.split("/")[0] + "\" 2>/dev/null)\"; "
+    + "__report() { printf '%s\\n' \"sourceHash=$__hash\" \"$@\"; exit 0; }; "
     + "__found=''; "
     // Shipped first; a local build only if that is absent or unusable.
     + "for __pair in " + shellQuote("development:" + spec.development) + "; do "
@@ -5253,8 +5266,13 @@ function helperInspectCommand(pluginDir, spec) {
     + "  __proto=\"$(printf '%s' \"$__version\" | sed -n " + shellQuote(spec.protocolSed) + ")\"; "
     + "  if timeout 20 \"$__bin\" --self-test >/dev/null 2>&1; then __self=pass; "
     + "  else __self=fail; __state=self-test-failed; continue; fi; "
+    + "  __stamp=missing; "
+    + "  if [ \"$__source\" = development ] && [ -f \"$__bin.source-sha256\" ]; then "
+    + "    __stamp=mismatch; "
+    + "    if [[ \"$__hash\" =~ ^[0-9a-f]{64}$ ]] && [ \"$__hash\" = \"$(head -c 65 -- \"$__bin.source-sha256\")\" ]; then __stamp=match; fi; "
+    + "  fi; "
     + "  __report state=ok \"source=$__source\" \"version=$__semver\" \"protocol=$__proto\" "
-    + "\"checksum=$__checksum\" \"selfTest=$__self\"; "
+    + "\"checksum=$__checksum\" \"selfTest=$__self\" \"sourceStamp=$__stamp\"; "
     + "done; "
     + "if [ -z \"$__found\" ]; then __report state=missing; fi; "
     // Keep the checksum verdict in failures, so "mismatch" is not "unchecked".
@@ -5277,13 +5295,13 @@ function sshAgentHelperInspectCommand(pluginDir) {
 // A helper's state before its inspection has run.
 function uninspectedHelper() {
   return { state: "unknown", source: "", version: "", protocol: 0,
-    checksum: "unchecked", selfTest: "", message: "" }
+    checksum: "unchecked", selfTest: "", sourceStamp: "missing", sourceHash: "", message: "" }
 }
 
 // Parses the inspection lines; the panel, not the script, judges the protocol.
 function parseHelperInspection(raw, expectedProtocol, messages) {
   var fields = { state: "missing", source: "", version: "", protocol: 0,
-    checksum: "unchecked", selfTest: "" }
+    checksum: "unchecked", selfTest: "", sourceStamp: "missing", sourceHash: "" }
   var lines = String(raw === undefined || raw === null ? "" : raw).split("\n")
   for (var i = 0; i < lines.length; i++) {
     var cut = lines[i].indexOf("=")
@@ -5301,11 +5319,10 @@ function parseHelperInspection(raw, expectedProtocol, messages) {
 }
 
 // User-facing text for each failed inspection state of a helper.
-function helperMessages(noun, manifest, protocolMismatch) {
+function helperMessages(noun, protocolMismatch) {
   var the = "The " + noun
   return {
-    "missing": the + " was not found. Build it from this checkout using "
-      + "`cargo build --manifest-path " + manifest + " --locked`.",
+    "missing": the + " was not found. Run `scripts/build-helpers.sh` in the plugin directory.",
     "not-a-file": the + " path is not a file.",
     "not-executable": the + " is not executable. A clone from an archive can drop "
       + "file modes; `chmod +x` on it is enough.",
@@ -5316,14 +5333,14 @@ function helperMessages(noun, manifest, protocolMismatch) {
     "checksum-mismatch": the + " does not match its recorded checksum. That usually "
       + "means a stale binary after an update, or an incomplete clone.",
     "no-version": the + " did not report a usable version.",
-    "self-test-failed": the + " failed its own self-test on this machine.",
-    "protocol-mismatch": the + " " + protocolMismatch + " than this version of the plugin. "
-      + "Rebuild the helper from the updated plugin source.",
+    "self-test-failed": the + " failed its self-test. Rebuild with `scripts/build-helpers.sh`.",
+    "protocol-mismatch": the + " " + protocolMismatch + " than this plugin. "
+      + "Rebuild with `scripts/build-helpers.sh`.",
     "unusable": the + " could not be used."
   }
 }
 
-var SSH_AGENT_HELPER_MESSAGES = helperMessages("SSH agent helper", "agent/Cargo.toml",
+var SSH_AGENT_HELPER_MESSAGES = helperMessages("SSH agent helper",
   "speaks a different control protocol")
 
 function parseSshAgentHelperInspection(raw) {
@@ -5357,7 +5374,7 @@ function unlockKeyInspectCommand(pluginDir) {
   return helperInspectCommand(pluginDir, UNLOCK_KEY_SPEC)
 }
 
-var UNLOCK_KEY_MESSAGES = helperMessages("quick-unlock tool", "unlock-key/Cargo.toml",
+var UNLOCK_KEY_MESSAGES = helperMessages("quick-unlock tool",
   "uses a different envelope format")
 
 function parseUnlockKeyInspection(raw) {
@@ -5411,7 +5428,7 @@ function vaultHelperInspectCommand(pluginDir) {
   return helperInspectCommand(pluginDir, VAULT_HELPER_SPEC)
 }
 
-var VAULT_HELPER_MESSAGES = helperMessages("vault helper", "vault/Cargo.toml",
+var VAULT_HELPER_MESSAGES = helperMessages("vault helper",
   "speaks a different protocol")
 
 function parseVaultHelperInspection(raw) {
@@ -5430,9 +5447,16 @@ function vaultHelperWarning(reason) {
 
 // The banner while the helper cannot be used and the vault stays locked
 // (`allowVaultWithoutHelper` not set).
-function vaultHelperUnavailableWarning(reason) {
-  return "The vault stays locked: " + (String(reason || "").trim() || "the vault helper is unavailable.")
-    + " Build the helpers locally with scripts/build-helpers.sh, then click here to check again."
+function vaultHelperUnavailableWarning(reason, translate) {
+  var tr = translate || function(text) { return text }
+  return tr("The vault stays locked: ")
+    + tr(String(reason || "").trim() || "The vault helper is unavailable. Run `scripts/build-helpers.sh`.")
+    + tr(" Click here to check again.")
+}
+
+function helperRebuildable(inspection) {
+  // A stale local binary can fail its self-test after an update.
+  return Boolean(inspection) && ["missing", "protocol-mismatch", "self-test-failed", "checksum-mismatch"].indexOf(inspection.state) !== -1
 }
 
 // One request line. `fields` must not carry `type` or `v`.
@@ -6364,10 +6388,36 @@ function installPackagesCommand(pkgs, displayName) {
     if (!isPlainPackageName(pkgs[i])) return null
   }
   var name = displayName || (pkgs.length === 1 ? pkgs[0] : "Bitwarden plugin dependencies")
-  var inner = "if command -v pacman >/dev/null 2>&1; then sudo pacman -S --needed "
+  var inner = installPackagesScript(pkgs)
+    + "; printf '\\nPress Enter to close'; read -r _answer";
+  return ["bash", "-c", terminalScript(inner)]
+}
+
+// Shared by setup and the helper build; callers supply validated package names.
+function installPackagesScript(pkgs, translate) {
+  var tr = translate || function(text) { return text }
+  return "if command -v pacman >/dev/null 2>&1; then sudo pacman -S --needed "
     + pkgs.map(shellQuote).join(" ")
-    + "; else printf '%s\\n' " + shellQuote("Install these packages with your distribution package manager: " + pkgs.join(" "))
-    + "; fi; printf '\\nPress Enter to close'; read -r _answer";
+    + "; else printf '%s\\n' "
+    + shellQuote(tr("Install these packages with your distribution package manager: ") + pkgs.join(" "))
+    + "; false; fi"
+}
+
+function buildHelpersCommand(pluginDir, translate) {
+  var dir = cleanAbsoluteDir(pluginDir)
+  if (!dir || dir.indexOf("\u0000") !== -1) return null
+  var tr = translate || function(text) { return text }
+  // Only this checkout's fixed script is executable; no vault data enters it.
+  var inner = "__build_helpers() { cd -- " + shellQuote(dir) + " || return; "
+    + "if ! command -v cargo >/dev/null 2>&1; then printf '%s\\n' "
+    + shellQuote(tr("cargo was not found. Rust/Cargo is needed to build the helpers.")) + "; "
+    + "if command -v pacman >/dev/null 2>&1; then printf '%s' "
+    + shellQuote(tr("Install Rust with sudo pacman -S --needed rust? [y/N] ")) + "; "
+    + "read -r _answer; case \"$_answer\" in y|Y) ;; *) return 1;; esac; fi; "
+    + installPackagesScript(["rust"], tr) + " || return; fi; bash "
+    + shellQuote(dir + "/scripts/build-helpers.sh") + "; }; "
+    + "__build_helpers; __result=$?; printf '\\n%s' " + shellQuote(tr("Press Enter to close"))
+    + "; read -r _answer; exit \"$__result\""
   return ["bash", "-c", terminalScript(inner)]
 }
 

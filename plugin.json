@@ -20,6 +20,7 @@
   "dependencies": [
     "bitwarden-cli",
     "jq",
+    "rust",
     "wl-clipboard",
     "pinentry",
     "argon2",
